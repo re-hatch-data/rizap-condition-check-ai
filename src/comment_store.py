@@ -69,6 +69,9 @@ class CommentStore:
         rows = [HEADERS]
         for (date_str, uid), entry in sorted(self._entries.items()):
             rows.append([date_str, uid, entry["comment"], entry["hash"], entry["generated_at"]])
+        # 日次で1行ずつ増え続けるため、初期グリッド(200行)を超えたら拡張する
+        if len(rows) > self._ws.row_count:
+            self._ws.resize(rows=len(rows) + 50)
         self._ws.clear()
         self._ws.update("A1", rows)
         self._dirty = False

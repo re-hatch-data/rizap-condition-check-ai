@@ -1,7 +1,7 @@
 # アーキテクチャ
 
 ```
-Cloud Scheduler(毎朝 JST 8:00 ── SOXAI Ring同期(JST7:00/最大55分)の後にバッファを見て起動)
+Cloud Scheduler(毎朝 JST 8:30 ── SOXAI Ring同期(JST7:00/最大55分・GitHub Actionsのcron遅延あり)の後にバッファを見て起動)
   ↓ HTTP(jobs.run)
 Cloud Run Jobs(このリポジトリ)
   ├ RIZAP側Googleアカウントのトークンで Drive/Sheets API 認証(OAuth・SA共有なし)

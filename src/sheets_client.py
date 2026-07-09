@@ -23,8 +23,10 @@ from googleapiclient.discovery import build
 
 logger = logging.getLogger(__name__)
 
+# Driveはフォルダ走査（読み取り）にしか使わないため readonly に絞る。
+# シートへの書き込みは spreadsheets スコープで行う。
 SCOPES = [
-    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
@@ -122,15 +124,29 @@ def get_or_create_worksheet(sh: gspread.Spreadsheet, title: str, rows: int = 100
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
 
 
+def align_comments_to_dates(date_cells: list[str], comments_by_date: dict[str, str]) -> list[str]:
+    """シート上のA列（日付セル）の並びに合わせて、コメントを行順のリストにする。
+
+    処理側のDataFrameは日付昇順ソート＋不正日付行の除外を行うため、シートの行順とは
+    一致しない可能性がある。行番号ではなく日付をキーに突き合わせることでズレを防ぐ。
+    日付として解釈できないセルや、コメントが無い日付は空文字を入れる。
+    """
+    aligned = []
+    for cell in date_cells:
+        ts = pd.to_datetime(cell, errors="coerce")
+        aligned.append("" if pd.isna(ts) else comments_by_date.get(ts.strftime("%Y-%m-%d"), ""))
+    return aligned
+
+
 def write_comment_column(
     sheets_svc,
     sh: gspread.Spreadsheet,
     sheet_name: str,
     comment_header: str,
-    comments_in_row_order: list[str],
+    comments_by_date: dict[str, str],
 ) -> None:
-    """SOXAI_daily の日付列（A列）の隣（B列）にコメント列を挿入して書き込み、
-    元データ列（C列以降）を折りたたむ。
+    """SOXAI_daily の日付列（A列）の隣（B列）にコメント列を挿入し、A列の日付と
+    突き合わせてコメントを書き込む。元データ列（C列以降）は折りたたむ。
     """
     ws = sh.worksheet(sheet_name)
     sheet_id = ws.id
@@ -158,7 +174,9 @@ def write_comment_column(
         ).execute()
         n_cols += 1
 
-    values = [[comment_header]] + [[c] for c in comments_in_row_order]
+    date_cells = ws.col_values(1)[1:]  # ヘッダー行を除いたA列
+    comments = align_comments_to_dates(date_cells, comments_by_date)
+    values = [[comment_header]] + [[c] for c in comments]
     sheets_svc.spreadsheets().values().update(
         spreadsheetId=sh.id,
         range=f"'{sheet_name}'!B1:B{len(values)}",
