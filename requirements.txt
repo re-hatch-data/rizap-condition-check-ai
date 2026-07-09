@@ -1,0 +1,7 @@
+gspread>=6.1
+google-auth>=2.35
+google-auth-oauthlib>=1.2
+google-api-python-client>=2.149
+anthropic[vertex]>=0.40
+pandas>=2.2
+python-dotenv>=1.0
