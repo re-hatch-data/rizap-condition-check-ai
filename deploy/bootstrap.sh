@@ -7,12 +7,21 @@
 #   - 対象プロジェクトに soxai-runner サービスアカウントが存在すること
 #     (名前が違う場合は SA_EMAIL 環境変数で指定)
 #
-# Usage: deploy/bootstrap.sh <PROJECT_ID> [REGION]
+# Usage: deploy/bootstrap.sh <PROJECT_ID> [毎朝の実行時刻 HH:MM (JST)]
+#   例: deploy/bootstrap.sh rizap-marketing 09:30
+# 実行時刻を省略した場合は 08:30。後から変える場合は同じコマンドを時刻を変えて再実行するだけでよい。
+# REGION は環境変数で上書き可(既定: asia-northeast1)。
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-PROJECT_ID="${1:?Usage: bootstrap.sh <PROJECT_ID> [REGION]}"
-REGION="${2:-asia-northeast1}"
+PROJECT_ID="${1:?Usage: bootstrap.sh <PROJECT_ID> [HH:MM]}"
+RUN_AT="${2:-08:30}"
+if [[ ! "${RUN_AT}" =~ ^([01]?[0-9]|2[0-3]):[0-5][0-9]$ ]]; then
+  echo "!! 実行時刻は HH:MM 形式(JST)で指定してください (例: 09:30)"
+  exit 1
+fi
+SCHEDULE="$((10#${RUN_AT##*:})) $((10#${RUN_AT%%:*})) * * *"
+REGION="${REGION:-asia-northeast1}"
 SA_EMAIL="${SA_EMAIL:-soxai-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 echo "==> [1/4] GCP初期セットアップ(API有効化・IAM・Secretの箱)"
@@ -38,8 +47,8 @@ else
   if [[ -n "${CREATED_KEY}" ]]; then rm -f "${KEY_FILE}"; fi
 fi
 
-echo "==> [3/4] Cloud Run Jobs + Cloud Scheduler デプロイ"
-SA_EMAIL="${SA_EMAIL}" REGION="${REGION}" ./deploy/deploy.sh "${PROJECT_ID}"
+echo "==> [3/4] Cloud Run Jobs + Cloud Scheduler デプロイ(毎朝 JST ${RUN_AT} 実行)"
+SA_EMAIL="${SA_EMAIL}" REGION="${REGION}" SCHEDULE="${SCHEDULE}" ./deploy/deploy.sh "${PROJECT_ID}"
 
 echo "==> [4/4] 動作確認(即時1回実行・完了まで待機)"
 gcloud run jobs execute condition-check-ai \
@@ -48,4 +57,5 @@ gcloud run jobs execute condition-check-ai \
 echo ""
 echo "✅ 構築完了。被験者スプレッドシートを開き、以下を確認してください:"
 echo "   - AIコメント_ログ シートが作成され、日付ごとのコメントが入っている"
-echo "   以降は毎朝JST8:30(SOXAI Ring同期の後)に自動実行されます。"
+echo "   以降は毎朝 JST ${RUN_AT} に自動実行されます。"
+echo "   実行時刻を変える場合: deploy/bootstrap.sh ${PROJECT_ID} <HH:MM> を再実行"

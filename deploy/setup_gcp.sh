@@ -5,7 +5,7 @@
 # Drive/Sheetsアクセスは、既存パイプライン rizap-soxai-ring が使っている
 # サービスアカウント(soxai-runner)を再利用する。このSAは対象スプレッドシートへの
 # アクセス実績が既にあるため、フォルダ共有やOAuth認可のやり直しが不要。
-# 本エージェント用に追加で必要なのは Vertex AI(Gemini)呼び出し権限のみ。
+# 本エージェント用に追加で必要なのは Agent Platform(旧Vertex AI・Gemini)呼び出し権限のみ。
 #
 # Usage: deploy/setup_gcp.sh <PROJECT_ID> [REGION]
 # 環境変数(任意で上書き):
@@ -35,7 +35,7 @@ if ! gcloud iam service-accounts describe "${SA_EMAIL}" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "==> Vertex AI(Gemini)呼び出し権限の付与"
+echo "==> Agent Platform(旧Vertex AI・Gemini)呼び出し権限の付与"
 gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/aiplatform.user" \

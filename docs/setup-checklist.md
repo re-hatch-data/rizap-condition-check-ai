@@ -36,4 +36,4 @@
 
 - [ ] 「適正値」の基準（個人内基準か、チーム/全体基準か、両方併用か）
 - [ ] SD逸脱度の具体的な閾値の最終決定（`SD_THRESHOLD`環境変数で調整可能）
-- [ ] Vertex AI経由のGeminiモデルの料金感の確認
+- [ ] Agent Platform（旧Vertex AI）経由のGeminiモデルの料金感の確認

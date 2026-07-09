@@ -12,12 +12,14 @@
 ```bash
 git clone https://github.com/re-hatch-data/rizap-condition-check-ai.git
 cd rizap-condition-check-ai
-./deploy/bootstrap.sh <PROJECT_ID>
+./deploy/bootstrap.sh rizap-marketing 09:30   # 第2引数 = 毎朝の実行時刻(JST)。MTGで決めた時刻を入れる
 ```
 
 これで API有効化 → IAM付与 → SAキーのSecret登録 → Cloud Run Jobs + Schedulerデプロイ →
 即時1回実行（シート反映の確認）まで通しで完了する。
 
+- **実行時刻は第2引数(HH:MM)で指定**（省略時 08:30）。後から変える場合は
+  時刻を変えて同じコマンドを再実行するだけでよい
 - 対象フォルダIDは既定値としてコード側に設定済み（変える場合は `COND_FOLDER_ID` 環境変数）
 - SAの名前が `soxai-runner@<PROJECT_ID>.iam.gserviceaccount.com` と異なる場合は
   `SA_EMAIL=<正式なSAメール> ./deploy/bootstrap.sh <PROJECT_ID>` で指定
@@ -85,17 +87,17 @@ cd rizap-condition-check-ai
    対象スプレッドシートを開き、`AIコメント_ログ` シートが作成され、
    日付ごとのコメントが入っているかを確認する（SOXAI_daily自体には書き込まない）。
 
-6. 本番運用開始：Cloud Schedulerが毎朝 JST 8:30（SOXAI Ring同期の後）に自動実行する。
+6. 本番運用開始：Cloud Schedulerが毎朝、指定時刻（JST）に自動実行する。
    運用開始後しばらくは、当日分のコメントが毎朝追記されているかを数日分は目視確認することを推奨。
-   当日アンケートの提出が8:30より遅い被験者が多い場合は、`SCHEDULE` 環境変数で
-   起動時刻を遅らせて再デプロイする（例: `SCHEDULE="30 9 * * *" ./deploy/deploy.sh <PROJECT_ID>`）。
+   実行時刻を変える場合は `./deploy/bootstrap.sh <PROJECT_ID> <HH:MM>` を再実行する
+   （SOXAI Ring同期(JST7:00頃)より後、かつアンケート提出が揃う時刻を推奨）。
 
 ## トラブルシュート
 
 - **当日分のコメントが生成されない/前日までしか無い** → Cloud Schedulerの実行が
   SOXAI Ring同期(JST7:00)より前になっていないか
   （`gcloud scheduler jobs describe condition-check-ai` でスケジュールを確認）
-- **Vertex AI呼び出しが403** → `roles/aiplatform.user` の付与、およびVertex AI API
+- **Gemini(Agent Platform)呼び出しが403** → `roles/aiplatform.user` の付与、およびAPI
   （`aiplatform.googleapis.com`）が有効化されているか確認（`docs/iam-request.md` 参照）
 - **Drive/Sheetsアクセスが403/404** → soxai-runner に対象フォルダのアクセス権があるか
   （rizap-soxai-ring の同期が正常に動いていれば権限はあるはず）、SAキーが失効していないかを確認。

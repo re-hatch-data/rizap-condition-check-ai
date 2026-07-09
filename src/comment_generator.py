@@ -1,6 +1,7 @@
-"""Vertex AI経由でGeminiを呼び出し、日次コメント（特徴的な値の指摘＋今日の過ごし方アドバイス）を生成する。
+"""Agent Platform（旧Vertex AI）経由でGeminiを呼び出し、日次コメントを生成する。
 
-Geminiは純正のGoogleモデルのため、RIZAP側GCPプロジェクトでVertex AI APIを有効化するだけで
+コメント内容は「特徴的な値の指摘＋今日の過ごし方アドバイス」。
+Geminiは純正のGoogleモデルのため、API（aiplatform.googleapis.com）を有効化するだけで
 利用できる（Model Garden経由のパートナーモデルのような追加の利用規約同意が不要）。
 """
 
