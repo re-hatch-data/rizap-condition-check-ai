@@ -3,17 +3,16 @@
 #
 # 起動時刻は既存パイプライン rizap-soxai-ring(GitHub Actions, 毎朝JST7:00実行・
 # タイムアウト上限55分)の後に十分なバッファを見てJST8:30とする。
-# GitHub Actionsのschedule実行は混雑時に開始が数分〜数十分遅れることがあるため、
-# 7:00+55分=7:55ちょうどを想定した8:00起動では追い越すリスクがある。
-# SOXAI_dailyシートはそちらが毎回delete→再作成するため、このジョブは常にその後に
-# 実行される必要がある(先に実行するとコメント列がその日のうちに消えてしまう)。
+# 当日分のSOXAI_dailyデータはそちらの同期で書き込まれるため、その後に実行しないと
+# 前日までのデータしか無い状態でコメントを生成することになる
+# (GitHub Actionsのschedule実行は混雑時に開始が数十分遅れる点も考慮)。
 # ※当日アンケート(Googleフォーム)の提出が8:30以降になる被験者がいる場合は
 #   SCHEDULE を遅らせる(未提出でもコメントは生成され、回答は翌朝の再生成で反映される)。
 #
 # Usage: deploy/deploy.sh <PROJECT_ID>
 #
 # 環境変数(任意で上書き):
-#   SA_EMAIL   実行サービスアカウント(既定: soxai-ring-runner@<PROJECT_ID>...)
+#   SA_EMAIL   実行サービスアカウント(既定: soxai-runner@<PROJECT_ID>...)
 #   REGION     Cloud Runのリージョン(既定: asia-northeast1)
 #   SCHEDULE   Cloud Schedulerのcron式(既定: "30 8 * * *" = 毎朝JST8:30)
 set -euo pipefail
@@ -22,14 +21,14 @@ PROJECT_ID="${1:?Usage: deploy.sh <PROJECT_ID>}"
 REGION="${REGION:-asia-northeast1}"
 SCHEDULE="${SCHEDULE:-30 8 * * *}"
 JOB_NAME="condition-check-ai"
-SA_EMAIL="${SA_EMAIL:-soxai-ring-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
+SA_EMAIL="${SA_EMAIL:-soxai-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 ENV_VARS="GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
 # us-central1 = Gemini(Vertex AI)の利用リージョン(config.py の既定と揃える)
 ENV_VARS="${ENV_VARS},GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION:-us-central1}"
 ENV_VARS="${ENV_VARS},COND_FOLDER_ID=${COND_FOLDER_ID:-1O7oYAdZ6opu_P9tZ-_0idO__E_WXKcGG}"
 ENV_VARS="${ENV_VARS},GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}"
-# Drive/Sheets/Vertex AIすべて soxai-ring-runner のSAキー(ADC)で認証する
+# Drive/Sheets/Vertex AIすべて soxai-runner のSAキー(ADC)で認証する
 ENV_VARS="${ENV_VARS},GOOGLE_APPLICATION_CREDENTIALS=/secrets/sa-key.json"
 
 echo "==> Cloud Run Jobs デプロイ"

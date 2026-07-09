@@ -2,7 +2,7 @@
 
 デプロイ先はRIZAP側の**既存GCPプロジェクト `rizap-marketing`**（BigQuery・既存分析エージェント
 `rizap_data_analytics_aget` と同居。2026-07-10に新規プロジェクト払い出し方針から変更）。
-認証は rizap-soxai-ring が使用中の **soxai-ring-runner サービスアカウントを再利用**する
+認証は rizap-soxai-ring が使用中の **soxai-runner サービスアカウントを再利用**する
 （対象スプレッドシートへのアクセス実績が既にあるため、共有設定もOAuth認可も不要）。
 
 ## 当日の1コマンド構築（RIZAP担当者向け）
@@ -19,7 +19,7 @@ cd rizap-condition-check-ai
 即時1回実行（シート反映の確認）まで通しで完了する。
 
 - 対象フォルダIDは既定値としてコード側に設定済み（変える場合は `COND_FOLDER_ID` 環境変数）
-- SAの名前が `soxai-ring-runner@<PROJECT_ID>.iam.gserviceaccount.com` と異なる場合は
+- SAの名前が `soxai-runner@<PROJECT_ID>.iam.gserviceaccount.com` と異なる場合は
   `SA_EMAIL=<正式なSAメール> ./deploy/bootstrap.sh <PROJECT_ID>` で指定
 - 手元に既存のSAキーJSONがある場合は `SA_KEY_FILE=<パス>` で渡せる（無ければ新規キーを発行し、
   Secret Manager登録後にローカルからは削除する）
@@ -57,7 +57,7 @@ cd rizap-condition-check-ai
 
    ```bash
    gcloud iam service-accounts keys create /tmp/sa-key.json \
-     --iam-account soxai-ring-runner@<PROJECT_ID>.iam.gserviceaccount.com
+     --iam-account soxai-runner@<PROJECT_ID>.iam.gserviceaccount.com
    gcloud secrets versions add soxai-sa-key --data-file=/tmp/sa-key.json
    rm /tmp/sa-key.json
    ```
@@ -82,22 +82,22 @@ cd rizap-condition-check-ai
    gcloud run jobs execute condition-check-ai --project <PROJECT_ID> --region asia-northeast1 --wait
    ```
 
-   対象スプレッドシートを開き、`SOXAI_daily` のB列にコメントが入っているか、
-   `AIコメント_ログ` シートが作成されているかを確認する。
+   対象スプレッドシートを開き、`AIコメント_ログ` シートが作成され、
+   日付ごとのコメントが入っているかを確認する（SOXAI_daily自体には書き込まない）。
 
 6. 本番運用開始：Cloud Schedulerが毎朝 JST 8:30（SOXAI Ring同期の後）に自動実行する。
-   運用開始後しばらくは、翌朝もコメント列が正しく再構築されているか（上書き対策が
-   機能しているか）を数日分は目視確認することを推奨。
+   運用開始後しばらくは、当日分のコメントが毎朝追記されているかを数日分は目視確認することを推奨。
    当日アンケートの提出が8:30より遅い被験者が多い場合は、`SCHEDULE` 環境変数で
    起動時刻を遅らせて再デプロイする（例: `SCHEDULE="30 9 * * *" ./deploy/deploy.sh <PROJECT_ID>`）。
 
 ## トラブルシュート
 
-- **コメント列が翌朝消えている** → Cloud Schedulerの実行がSOXAI Ring同期より前になっていないか
+- **当日分のコメントが生成されない/前日までしか無い** → Cloud Schedulerの実行が
+  SOXAI Ring同期(JST7:00)より前になっていないか
   （`gcloud scheduler jobs describe condition-check-ai` でスケジュールを確認）
 - **Vertex AI呼び出しが403** → `roles/aiplatform.user` の付与、およびVertex AI API
   （`aiplatform.googleapis.com`）が有効化されているか確認（`docs/iam-request.md` 参照）
-- **Drive/Sheetsアクセスが403/404** → soxai-ring-runner に対象フォルダのアクセス権があるか
+- **Drive/Sheetsアクセスが403/404** → soxai-runner に対象フォルダのアクセス権があるか
   （rizap-soxai-ring の同期が正常に動いていれば権限はあるはず）、SAキーが失効していないかを確認。
   キーを再発行する場合: `gcloud iam service-accounts keys create ...` →
   `gcloud secrets versions add soxai-sa-key --data-file=...`

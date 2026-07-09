@@ -33,13 +33,42 @@ def _env_int(key: str, default: int):
     return lambda: int(os.environ.get(key, str(default)))
 
 
-# 設計概要書で「特徴的な値」の対象として明記されている4指標。
-# 拡張したい場合はここに列名（スプレッドシート上の日本語列名）を追加する。
-TARGET_METRICS = ["QOLスコア", "活動スコア", "安静時代謝kcal", "活動消費kcal"]
+# コメント対象の指標（SOXAI_daily上の列名）。
+# トレーナー・本人がそのまま解釈して行動に繋げられる実測値のみを使う。
+# QOLスコア・活動スコア・健康スコア・睡眠スコアなどの合成スコアは、値を見ても
+# 「何が良い/悪いのか」を説明できずアドバイスに繋がらないため渡さない（2026-07-10決定）。
+TARGET_METRICS = [
+    "歩数",
+    "活動消費kcal",
+    "ストレス",
+    "総睡眠min",
+    "深睡眠min",
+    "浅睡眠min",
+    "REM_min",
+    "入眠潜時min",
+    "睡眠効率",
+    "就寝時刻",
+    "起床時刻",
+]
+
+# 睡眠が計測されていない日（総睡眠min=0）は、0ではなく欠測として扱う指標
+SLEEP_METRICS = [
+    "総睡眠min",
+    "深睡眠min",
+    "浅睡眠min",
+    "REM_min",
+    "入眠潜時min",
+    "睡眠効率",
+    "就寝時刻",
+    "起床時刻",
+]
+TOTAL_SLEEP_COLUMN = "総睡眠min"
+
+# ISO日時文字列 → 時刻(時間の小数)に変換して「普段より遅い/早い」を比較可能にする指標
+TIME_METRICS = ["就寝時刻", "起床時刻"]
 
 DAILY_SHEET = "SOXAI_daily"
 COMMENT_LOG_SHEET = "AIコメント_ログ"
-COMMENT_COLUMN_HEADER = "コメント"
 DATE_COLUMN = "日付"
 UID_COLUMN = "ユーザーID"
 
@@ -63,8 +92,9 @@ class Settings:
 
     # --- Gemini (Vertex AI経由) ---
     gemini_model: str = field(default_factory=_env("GEMINI_MODEL", "gemini-2.5-flash"))
-    comment_min_len: int = field(default_factory=_env_int("COMMENT_MIN_LEN", 40))
-    comment_max_len: int = field(default_factory=_env_int("COMMENT_MAX_LEN", 60))
+    # 「特徴的な値の指摘＋今日1日の過ごし方アドバイス」を1〜2文で収める目安
+    comment_min_len: int = field(default_factory=_env_int("COMMENT_MIN_LEN", 60))
+    comment_max_len: int = field(default_factory=_env_int("COMMENT_MAX_LEN", 120))
 
     # --- フラグ検知 ---
     sd_threshold: float = field(default_factory=_env_float("SD_THRESHOLD", 2.0))

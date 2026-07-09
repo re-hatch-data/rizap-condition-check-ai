@@ -5,7 +5,7 @@
 **明日（7/11）のRIZAPミーティングで、既存プロジェクト `rizap-marketing` に構築する。**
 新規プロジェクトの払い出しは不要になった。REHATCH側の実装（本リポジトリ）は完了済み。
 
-1. ⏳ 事前準備: 正式なプロジェクトIDと、soxai-ring-runner サービスアカウントの
+1. ⏳ 事前準備: 正式なプロジェクトIDと、soxai-runner サービスアカウントの
    正式なメールアドレスを確認（`docs/iam-request.md` の①〜③）
 2. ⏳ ミーティング当日、Editor権限を持つ担当が `deploy/bootstrap.sh <PROJECT_ID>` を実行
    （手順: `docs/runbook.md` 冒頭。OAuth・ブラウザ認可は不要）

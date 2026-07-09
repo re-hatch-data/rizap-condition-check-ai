@@ -6,7 +6,7 @@
 
 import pandas as pd
 
-from src.config import DATE_COLUMN
+from src.config import DATE_COLUMN, SLEEP_METRICS, TIME_METRICS, TOTAL_SLEEP_COLUMN
 
 PREV_DIFF_SUFFIX = "_前日比"
 VS_7D_SUFFIX = "_7日平均比"
@@ -23,6 +23,19 @@ def compute_flags(df: pd.DataFrame, target_metrics: list[str], sd_threshold: flo
     df = df.copy()
     df[DATE_COLUMN] = pd.to_datetime(df[DATE_COLUMN], errors="coerce")
     df = df.dropna(subset=[DATE_COLUMN]).sort_values(DATE_COLUMN).reset_index(drop=True)
+
+    # 就寝/起床時刻(ISO日時文字列)を時刻(時間の小数)へ変換し、「普段より遅い」を数値比較できるようにする
+    for col in TIME_METRICS:
+        if col in df.columns:
+            df[col] = _time_to_hours(df[col], evening=(col == "就寝時刻"))
+
+    # リング未装着等で睡眠が計測されていない日(総睡眠min=0)は、0ではなく欠測として扱う
+    # (0のまま平均やSDに入れると本人の平常値が大きく歪むため)
+    if TOTAL_SLEEP_COLUMN in df.columns:
+        no_sleep = pd.to_numeric(df[TOTAL_SLEEP_COLUMN], errors="coerce").fillna(0) <= 0
+        for metric in SLEEP_METRICS:
+            if metric in df.columns:
+                df.loc[no_sleep, metric] = pd.NA
 
     for metric in target_metrics:
         if metric not in df.columns:
@@ -45,6 +58,16 @@ def compute_flags(df: pd.DataFrame, target_metrics: list[str], sd_threshold: flo
 
     df[MISSING_DAYS_COLUMN] = _missing_day_counts(df[DATE_COLUMN])
     return df
+
+
+def _time_to_hours(series: pd.Series, *, evening: bool) -> pd.Series:
+    """日時文字列を時刻(時間の小数)にする。就寝時刻は深夜0時台を24h+として扱い、
+    前日夜(23時台)との連続比較・平均計算ができるようにする。"""
+    ts = pd.to_datetime(series, errors="coerce")
+    hours = ts.dt.hour + ts.dt.minute / 60.0
+    if evening:
+        hours = hours.where(hours >= 15, hours + 24)
+    return hours
 
 
 def _missing_day_counts(dates: pd.Series) -> pd.Series:

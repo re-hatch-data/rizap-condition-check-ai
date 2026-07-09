@@ -3,18 +3,18 @@
 # 前提: gcloud CLIでログイン済み、対象プロジェクトにEditor権限あり。
 #
 # Drive/Sheetsアクセスは、既存パイプライン rizap-soxai-ring が使っている
-# サービスアカウント(soxai-ring-runner)を再利用する。このSAは対象スプレッドシートへの
+# サービスアカウント(soxai-runner)を再利用する。このSAは対象スプレッドシートへの
 # アクセス実績が既にあるため、フォルダ共有やOAuth認可のやり直しが不要。
 # 本エージェント用に追加で必要なのは Vertex AI(Gemini)呼び出し権限のみ。
 #
 # Usage: deploy/setup_gcp.sh <PROJECT_ID> [REGION]
 # 環境変数(任意で上書き):
-#   SA_EMAIL   利用するサービスアカウント(既定: soxai-ring-runner@<PROJECT_ID>...)
+#   SA_EMAIL   利用するサービスアカウント(既定: soxai-runner@<PROJECT_ID>...)
 set -euo pipefail
 
 PROJECT_ID="${1:?Usage: setup_gcp.sh <PROJECT_ID> [REGION]}"
 REGION="${2:-asia-northeast1}"
-SA_EMAIL="${SA_EMAIL:-soxai-ring-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
+SA_EMAIL="${SA_EMAIL:-soxai-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 gcloud config set project "${PROJECT_ID}"
 

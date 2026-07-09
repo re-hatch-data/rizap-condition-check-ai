@@ -1,9 +1,10 @@
 """Google Drive / Sheets アクセス。
 
 被験者ごとの「コンディションチェック」スプレッドシートを Drive フォルダから解決し、
-SOXAI_daily・フォームの回答シートの読み取り・コメント列の書き込みを行う。
+SOXAI_daily・フォームの回答シートを読み取る。コメントの出力（AIコメント_ログシート）は
+comment_store が担う。
 
-認証は既存パイプライン rizap-soxai-ring と同じサービスアカウント（soxai-ring-runner）を
+認証は既存パイプライン rizap-soxai-ring と同じサービスアカウント（soxai-runner）を
 再利用する。対象スプレッドシートへのアクセス実績が既にあるSAのため、追加の共有設定が不要。
 本番(Cloud Run Jobs)ではSAキーをSecret Manager経由でマウントし、
 GOOGLE_APPLICATION_CREDENTIALS で渡す（通常のADC解決）。
@@ -150,96 +151,3 @@ def get_or_create_worksheet(sh: gspread.Spreadsheet, title: str, rows: int = 100
         return sh.worksheet(title)
     except gspread.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
-
-
-def align_comments_to_dates(date_cells: list[str], comments_by_date: dict[str, str]) -> list[str]:
-    """シート上のA列（日付セル）の並びに合わせて、コメントを行順のリストにする。
-
-    処理側のDataFrameは日付昇順ソート＋不正日付行の除外を行うため、シートの行順とは
-    一致しない可能性がある。行番号ではなく日付をキーに突き合わせることでズレを防ぐ。
-    日付として解釈できないセルや、コメントが無い日付は空文字を入れる。
-    """
-    aligned = []
-    for cell in date_cells:
-        ts = pd.to_datetime(cell, errors="coerce")
-        aligned.append("" if pd.isna(ts) else comments_by_date.get(ts.strftime("%Y-%m-%d"), ""))
-    return aligned
-
-
-def write_comment_column(
-    sheets_svc,
-    sh: gspread.Spreadsheet,
-    sheet_name: str,
-    comment_header: str,
-    comments_by_date: dict[str, str],
-) -> None:
-    """SOXAI_daily の日付列（A列）の隣（B列）にコメント列を挿入し、A列の日付と
-    突き合わせてコメントを書き込む。元データ列（C列以降）は折りたたむ。
-    """
-    ws = sh.worksheet(sheet_name)
-    sheet_id = ws.id
-    n_cols = ws.col_count
-
-    # 同一日にリトライ実行した場合など、既にコメント列が入っていれば列挿入をスキップする
-    # (SOXAI Ring側が再構築した直後は毎回このヘッダーが無い状態から始まる)
-    already_present = ws.acell("B1").value == comment_header
-    if not already_present:
-        requests = [
-            {
-                "insertDimension": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "COLUMNS",
-                        "startIndex": 1,
-                        "endIndex": 2,
-                    },
-                    "inheritFromBefore": False,
-                }
-            }
-        ]
-        sheets_svc.spreadsheets().batchUpdate(
-            spreadsheetId=sh.id, body={"requests": requests}
-        ).execute()
-        n_cols += 1
-
-    date_cells = ws.col_values(1)[1:]  # ヘッダー行を除いたA列
-    comments = align_comments_to_dates(date_cells, comments_by_date)
-    values = [[comment_header]] + [[c] for c in comments]
-    sheets_svc.spreadsheets().values().update(
-        spreadsheetId=sh.id,
-        range=f"'{sheet_name}'!B1:B{len(values)}",
-        valueInputOption="RAW",
-        body={"values": values},
-    ).execute()
-
-    _collapse_columns(sheets_svc, sh.id, sheet_id, start_index=2, end_index=n_cols + 1)
-
-
-def _collapse_columns(sheets_svc, spreadsheet_id: str, sheet_id: int, start_index: int, end_index: int) -> None:
-    """元データ列（コメント列より後ろ）をグループ化して折りたたむ。失敗しても致命的ではないので握りつぶす。"""
-    group_range = {
-        "sheetId": sheet_id,
-        "dimension": "COLUMNS",
-        "startIndex": start_index,
-        "endIndex": end_index,
-    }
-    try:
-        sheets_svc.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={"requests": [{"addDimensionGroup": {"range": group_range}}]},
-        ).execute()
-        sheets_svc.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={
-                "requests": [
-                    {
-                        "updateDimensionGroup": {
-                            "dimensionGroup": {"range": group_range, "depth": 1, "collapsed": True},
-                            "fields": "collapsed",
-                        }
-                    }
-                ]
-            },
-        ).execute()
-    except Exception:
-        logger.warning("列の折りたたみに失敗しました（無視して続行）", exc_info=True)

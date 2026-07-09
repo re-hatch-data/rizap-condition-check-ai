@@ -1,9 +1,10 @@
-"""コメントの永続キャッシュ（`AIコメント_ログ`シート）。
+"""コメントの保存先（各被験者スプレッドシート内の `AIコメント_ログ`シート）。
 
-対象の SOXAI_daily シートは既存パイプライン（rizap-soxai-ring）により毎朝
-delete→再作成で丸ごと上書きされるため、追加したコメント列はそのままでは消えてしまう。
-そのため生成済みコメントは (日付, ユーザーID) をキーに本シートへ永続化し、
-元データのハッシュが変わっていない限り、SOXAI_daily 再構築後に再スタンプ（Gemini再呼び出し無し）する。
+トレーナーが見る唯一のアウトプット。SOXAI_daily には書き込まない
+（既存パイプライン rizap-soxai-ring が毎朝 SOXAI_daily/SOXAI_detail を
+delete→再作成しており、列を足しても消えるため。追加シートは削除対象外なので残る）。
+シートが無ければ作成し、あれば (日付, ユーザーID) をキーに追記・更新する。
+元データ・アンケートのハッシュが変わっていない日は再生成しない（Gemini呼び出しの節約）。
 """
 
 import hashlib
@@ -16,7 +17,8 @@ from src.config import COMMENT_LOG_SHEET
 
 logger = logging.getLogger(__name__)
 
-HEADERS = ["日付", "ユーザーID", "コメント", "データハッシュ", "生成日時"]
+# トレーナーが読む前提で、日付→コメントを先頭に置く
+HEADERS = ["日付", "コメント", "ユーザーID", "データハッシュ", "生成日時"]
 
 
 def compute_row_hash(row, target_metrics: list[str], extra: str = "") -> str:
@@ -68,7 +70,7 @@ class CommentStore:
             return
         rows = [HEADERS]
         for (date_str, uid), entry in sorted(self._entries.items()):
-            rows.append([date_str, uid, entry["comment"], entry["hash"], entry["generated_at"]])
+            rows.append([date_str, entry["comment"], uid, entry["hash"], entry["generated_at"]])
         # 日次で1行ずつ増え続けるため、初期グリッド(200行)を超えたら拡張する
         if len(rows) > self._ws.row_count:
             self._ws.resize(rows=len(rows) + 50)

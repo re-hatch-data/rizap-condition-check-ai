@@ -4,7 +4,7 @@
 #
 # 事前に必要なもの:
 #   - gcloud CLI でログイン済み(対象プロジェクトのEditor権限を持つアカウント)
-#   - 対象プロジェクトに soxai-ring-runner サービスアカウントが存在すること
+#   - 対象プロジェクトに soxai-runner サービスアカウントが存在すること
 #     (名前が違う場合は SA_EMAIL 環境変数で指定)
 #
 # Usage: deploy/bootstrap.sh <PROJECT_ID> [REGION]
@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PROJECT_ID="${1:?Usage: bootstrap.sh <PROJECT_ID> [REGION]}"
 REGION="${2:-asia-northeast1}"
-SA_EMAIL="${SA_EMAIL:-soxai-ring-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
+SA_EMAIL="${SA_EMAIL:-soxai-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 echo "==> [1/4] GCP初期セットアップ(API有効化・IAM・Secretの箱)"
 SA_EMAIL="${SA_EMAIL}" ./deploy/setup_gcp.sh "${PROJECT_ID}" "${REGION}"
@@ -47,6 +47,5 @@ gcloud run jobs execute condition-check-ai \
 
 echo ""
 echo "✅ 構築完了。被験者スプレッドシートを開き、以下を確認してください:"
-echo "   - SOXAI_daily のB列(日付の隣)にコメントが入っている"
-echo "   - AIコメント_ログ シートが作成されている"
+echo "   - AIコメント_ログ シートが作成され、日付ごとのコメントが入っている"
 echo "   以降は毎朝JST8:30(SOXAI Ring同期の後)に自動実行されます。"
