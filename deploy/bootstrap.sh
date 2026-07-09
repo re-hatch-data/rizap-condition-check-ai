@@ -1,13 +1,11 @@
 #!/usr/bin/env bash
-# ゼロから本番稼働までを1コマンドで行うラッパー(RIZAP側GCPプロジェクトでの初回構築用)。
-# setup_gcp.sh → OAuthトークン生成/登録 → deploy.sh → 動作確認(即時1回実行) を順に実行する。
+# ゼロから本番稼働までを1コマンドで行うラッパー(RIZAP側プロジェクトでの初回構築用)。
+# setup_gcp.sh → SAキーのSecret登録 → deploy.sh → 動作確認(即時1回実行) を順に実行する。
 #
 # 事前に必要なもの:
 #   - gcloud CLI でログイン済み(対象プロジェクトのEditor権限を持つアカウント)
-#   - python3 (3.12以上)
-#   - GCPコンソールで作成したOAuthクライアント(デスクトップアプリ)のJSONを
-#     credentials/oauth-client.json に配置(手順: docs/runbook.md)
-#   - 環境変数 COND_FOLDER_ID(または .env に記載)
+#   - 対象プロジェクトに soxai-ring-runner サービスアカウントが存在すること
+#     (名前が違う場合は SA_EMAIL 環境変数で指定)
 #
 # Usage: deploy/bootstrap.sh <PROJECT_ID> [REGION]
 set -euo pipefail
@@ -15,40 +13,35 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 PROJECT_ID="${1:?Usage: bootstrap.sh <PROJECT_ID> [REGION]}"
 REGION="${2:-asia-northeast1}"
+SA_EMAIL="${SA_EMAIL:-soxai-ring-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 
-# .env があれば読み込む(COND_FOLDER_ID など)
-if [[ -f .env ]]; then
-  set -a
-  source .env
-  set +a
-fi
-: "${COND_FOLDER_ID:?COND_FOLDER_ID を環境変数か .env で指定してください}"
+echo "==> [1/4] GCP初期セットアップ(API有効化・IAM・Secretの箱)"
+SA_EMAIL="${SA_EMAIL}" ./deploy/setup_gcp.sh "${PROJECT_ID}" "${REGION}"
 
-echo "==> [1/5] GCP初期セットアップ(API有効化・サービスアカウント・IAM)"
-./deploy/setup_gcp.sh "${PROJECT_ID}" "${REGION}"
-
-echo "==> [2/5] Drive/Sheets用OAuthトークンの準備"
-if [[ ! -f credentials/oauth-token.json ]]; then
-  if [[ ! -f credentials/oauth-client.json ]]; then
-    echo "!! credentials/oauth-client.json がありません。"
-    echo "   GCPコンソール → APIとサービス → 認証情報 → OAuthクライアントID(デスクトップアプリ)を作成し、"
-    echo "   JSONを credentials/oauth-client.json に置いてから再実行してください。"
-    exit 1
+echo "==> [2/4] SAキーの準備"
+if gcloud secrets versions list soxai-sa-key --project "${PROJECT_ID}" \
+    --filter="state=ENABLED" --format="value(name)" | grep -q .; then
+  echo "(secret soxai-sa-key は登録済み。スキップします)"
+else
+  # 手元にキーJSONがあれば SA_KEY_FILE=path で指定。無ければその場で新規キーを発行する
+  KEY_FILE="${SA_KEY_FILE:-}"
+  CREATED_KEY=""
+  if [[ -z "${KEY_FILE}" ]]; then
+    KEY_FILE="$(mktemp)/sa-key.json"
+    mkdir -p "$(dirname "${KEY_FILE}")"
+    gcloud iam service-accounts keys create "${KEY_FILE}" \
+      --iam-account "${SA_EMAIL}" --project "${PROJECT_ID}"
+    CREATED_KEY=1
   fi
-  if [[ ! -d .venv ]]; then python3 -m venv .venv; fi
-  ./.venv/bin/pip install -q -r requirements.txt
-  # ブラウザが開くので、対象データにアクセスできるRIZAP側Googleアカウントでログイン・許可する
-  ./.venv/bin/python -m scripts.generate_oauth_token
+  gcloud secrets versions add soxai-sa-key --data-file="${KEY_FILE}" --project "${PROJECT_ID}"
+  # Secret Manager登録後はローカルにキーを残さない
+  if [[ -n "${CREATED_KEY}" ]]; then rm -f "${KEY_FILE}"; fi
 fi
 
-echo "==> [3/5] トークンをSecret Managerへ登録"
-gcloud secrets versions add oauth-token \
-  --data-file=credentials/oauth-token.json --project "${PROJECT_ID}"
+echo "==> [3/4] Cloud Run Jobs + Cloud Scheduler デプロイ"
+SA_EMAIL="${SA_EMAIL}" REGION="${REGION}" ./deploy/deploy.sh "${PROJECT_ID}"
 
-echo "==> [4/5] Cloud Run Jobs + Cloud Scheduler デプロイ"
-COND_FOLDER_ID="${COND_FOLDER_ID}" REGION="${REGION}" ./deploy/deploy.sh "${PROJECT_ID}"
-
-echo "==> [5/5] 動作確認(即時1回実行・完了まで待機)"
+echo "==> [4/4] 動作確認(即時1回実行・完了まで待機)"
 gcloud run jobs execute condition-check-ai \
   --project "${PROJECT_ID}" --region "${REGION}" --wait
 

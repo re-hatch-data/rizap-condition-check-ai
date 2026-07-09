@@ -7,11 +7,13 @@
 # 7:00+55分=7:55ちょうどを想定した8:00起動では追い越すリスクがある。
 # SOXAI_dailyシートはそちらが毎回delete→再作成するため、このジョブは常にその後に
 # 実行される必要がある(先に実行するとコメント列がその日のうちに消えてしまう)。
+# ※当日アンケート(Googleフォーム)の提出が8:30以降になる被験者がいる場合は
+#   SCHEDULE を遅らせる(未提出でもコメントは生成され、回答は翌朝の再生成で反映される)。
 #
 # Usage: deploy/deploy.sh <PROJECT_ID>
 #
 # 環境変数(任意で上書き):
-#   SA_EMAIL   実行サービスアカウント(既定: condition-check-ai@<PROJECT_ID>...)
+#   SA_EMAIL   実行サービスアカウント(既定: soxai-ring-runner@<PROJECT_ID>...)
 #   REGION     Cloud Runのリージョン(既定: asia-northeast1)
 #   SCHEDULE   Cloud Schedulerのcron式(既定: "30 8 * * *" = 毎朝JST8:30)
 set -euo pipefail
@@ -20,15 +22,15 @@ PROJECT_ID="${1:?Usage: deploy.sh <PROJECT_ID>}"
 REGION="${REGION:-asia-northeast1}"
 SCHEDULE="${SCHEDULE:-30 8 * * *}"
 JOB_NAME="condition-check-ai"
-SA_EMAIL="${SA_EMAIL:-condition-check-ai@${PROJECT_ID}.iam.gserviceaccount.com}"
+SA_EMAIL="${SA_EMAIL:-soxai-ring-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 
 ENV_VARS="GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
-# us-central1 = Gemini(Vertex AI)の利用リージョン(config.py の既定と揃える。
-# us-east5 はClaude時代の名残なので使わない)
+# us-central1 = Gemini(Vertex AI)の利用リージョン(config.py の既定と揃える)
 ENV_VARS="${ENV_VARS},GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION:-us-central1}"
-ENV_VARS="${ENV_VARS},COND_FOLDER_ID=${COND_FOLDER_ID:?COND_FOLDER_ID を環境変数で指定してください}"
+ENV_VARS="${ENV_VARS},COND_FOLDER_ID=${COND_FOLDER_ID:-1O7oYAdZ6opu_P9tZ-_0idO__E_WXKcGG}"
 ENV_VARS="${ENV_VARS},GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}"
-ENV_VARS="${ENV_VARS},GOOGLE_OAUTH_TOKEN_FILE=/secrets/oauth-token.json"
+# Drive/Sheets/Vertex AIすべて soxai-ring-runner のSAキー(ADC)で認証する
+ENV_VARS="${ENV_VARS},GOOGLE_APPLICATION_CREDENTIALS=/secrets/sa-key.json"
 
 echo "==> Cloud Run Jobs デプロイ"
 gcloud run jobs deploy "${JOB_NAME}" \
@@ -40,7 +42,7 @@ gcloud run jobs deploy "${JOB_NAME}" \
   --max-retries 1 \
   --task-timeout 30m \
   --set-env-vars "${ENV_VARS}" \
-  --set-secrets "/secrets/oauth-token.json=oauth-token:latest"
+  --set-secrets "/secrets/sa-key.json=soxai-sa-key:latest"
 
 echo "==> Cloud Schedulerで実行権限を付与(自分自身をトリガー)"
 gcloud run jobs add-iam-policy-binding "${JOB_NAME}" \

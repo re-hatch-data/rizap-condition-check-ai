@@ -19,10 +19,10 @@ logger = logging.getLogger(__name__)
 HEADERS = ["日付", "ユーザーID", "コメント", "データハッシュ", "生成日時"]
 
 
-def compute_row_hash(row, target_metrics: list[str]) -> str:
-    """当日の対象指標値から、変化検知用の短いハッシュを作る。"""
+def compute_row_hash(row, target_metrics: list[str], extra: str = "") -> str:
+    """当日の対象指標値（+アンケート回答などの追加入力）から、変化検知用の短いハッシュを作る。"""
     parts = [f"{metric}={row.get(metric)}" for metric in target_metrics]
-    raw = "|".join(parts)
+    raw = "|".join(parts) + "|" + extra
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 

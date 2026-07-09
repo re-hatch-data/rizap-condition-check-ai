@@ -16,6 +16,7 @@ from src.config import (
     COMMENT_COLUMN_HEADER,
     DAILY_SHEET,
     DATE_COLUMN,
+    FORM_SHEET,
     TARGET_METRICS,
     UID_COLUMN,
     settings,
@@ -26,6 +27,7 @@ from src.sheets_client import (
     get_google_services,
     list_subject_spreadsheets,
     load_daily_dataframe,
+    load_form_answers,
     write_comment_column,
 )
 
@@ -47,6 +49,7 @@ def process_subject(gc, sheets_svc, genai_client, subject: dict) -> None:
 
     sh = gc.open_by_key(spreadsheet_id)
     store = CommentStore(sh)
+    form_answers = load_form_answers(sh, FORM_SHEET)
 
     # HISTORY_DAYSより古い日付は新規生成せず、キャッシュがあれば再スタンプのみ。
     # （初回実行時に全履歴分のGemini呼び出しが走るのを防ぐ）
@@ -57,7 +60,9 @@ def process_subject(gc, sheets_svc, genai_client, subject: dict) -> None:
     for _, row in df.iterrows():
         date_str = row[DATE_COLUMN].strftime("%Y-%m-%d")
         uid = str(row.get(UID_COLUMN, ""))
-        row_hash = compute_row_hash(row, TARGET_METRICS)
+        answers = form_answers.get(date_str, {})
+        # アンケート回答もハッシュに含める（ジョブ実行後に回答が提出された日は翌朝再生成される）
+        row_hash = compute_row_hash(row, TARGET_METRICS, extra=str(sorted(answers.items())))
 
         cached = store.get(date_str, uid)
         if cached and cached["comment"] and (cached["hash"] == row_hash or row[DATE_COLUMN] < cutoff):
@@ -68,6 +73,7 @@ def process_subject(gc, sheets_svc, genai_client, subject: dict) -> None:
             continue
 
         context = row_context(row, TARGET_METRICS)
+        context["form_answers"] = answers
         comment = generate_comment(
             genai_client,
             settings.gemini_model,

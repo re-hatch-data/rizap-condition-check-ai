@@ -17,8 +17,10 @@ logger = logging.getLogger(__name__)
 SYSTEM_PROMPT = (
     "あなたはフィットネス施設のトレーナー向けに、被験者の日次コンディションデータから"
     "一言コメントを作成するアシスタントです。"
-    "与えられた数値・前日比・7日平均比・本人平均からのSD逸脱度・欠測日数をもとに、"
+    "与えられた数値・前日比・7日平均比・本人平均からのSD逸脱度・欠測日数と、"
+    "本人の当日アンケート回答（体調の自己評価・業務負荷の想定・食事の予定など）をもとに、"
     "特徴的な値の指摘と一言総評を、指定された文字数の範囲内の自然な日本語1文（または2文）で書いてください。"
+    "アンケート回答がある日は、数値と自己申告のギャップ（本人は元気なつもりだが数値は低い等）にも着目してください。"
     "数値の羅列や絵文字、前置き・見出しは不要です。コメント本文だけを出力してください。"
 )
 
@@ -40,6 +42,10 @@ def build_prompt(context: dict, min_len: int, max_len: int) -> str:
         lines.append(
             f"- {metric}: 値={value} 前日比={prev_diff} 7日平均比={vs_7d} SD逸脱度={sd_dev} {flag}"
         )
+    if context.get("form_answers"):
+        lines.append("本人の当日アンケート回答（コンディションチェック）:")
+        for question, answer in context["form_answers"].items():
+            lines.append(f"- {question}: {answer}")
     lines.append(f"\n{min_len}〜{max_len}字程度で、特徴的な値の指摘＋一言総評を書いてください。")
     return "\n".join(lines)
 

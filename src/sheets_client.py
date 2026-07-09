@@ -1,13 +1,14 @@
 """Google Drive / Sheets アクセス。
 
 被験者ごとの「コンディションチェック」スプレッドシートを Drive フォルダから解決し、
-SOXAI_daily シートの読み取り・コメント列の書き込みを行う。
+SOXAI_daily・フォームの回答シートの読み取り・コメント列の書き込みを行う。
 
-認証は「ユーザーもログインできるRIZAP側Googleアカウント」を使う方針のため、
-サービスアカウントへのフォルダ共有ではなく、そのアカウントでの1回限りのOAuth認可
-（`scripts/generate_oauth_token.py`）で発行したトークンファイルを使う。
-トークンファイルが無い環境（別方式に切り替えた場合など）では、通常のADC
-（GOOGLE_APPLICATION_CREDENTIALS やアタッチ済みサービスアカウント）にフォールバックする。
+認証は既存パイプライン rizap-soxai-ring と同じサービスアカウント（soxai-ring-runner）を
+再利用する。対象スプレッドシートへのアクセス実績が既にあるSAのため、追加の共有設定が不要。
+本番(Cloud Run Jobs)ではSAキーをSecret Manager経由でマウントし、
+GOOGLE_APPLICATION_CREDENTIALS で渡す（通常のADC解決）。
+GOOGLE_OAUTH_TOKEN_FILE にOAuthトークンファイルがある場合はそちらを優先する
+（ローカル検証用のフォールバック。`scripts/generate_oauth_token.py` で生成できる）。
 """
 
 import logging
@@ -20,6 +21,8 @@ from google.auth import default as google_auth_default
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
+
+from src.config import FORM_TIMESTAMP_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +118,31 @@ def load_daily_dataframe(gc: gspread.Client, spreadsheet_id: str, sheet_name: st
         return pd.DataFrame()
     records = ws.get_all_records()
     return pd.DataFrame(records)
+
+
+def load_form_answers(sh: gspread.Spreadsheet, sheet_name: str) -> dict[str, dict[str, str]]:
+    """当日アンケート（「フォームの回答 1」）を読み込み、日付(%Y-%m-%d) → {設問: 回答} を返す。
+
+    同じ日に複数回答がある場合は後の回答で上書きする。空欄の設問と、運用情報である
+    SOXAI RINGの同期状況（Q4）は除外する。シートが無ければ空dictを返す。
+    """
+    try:
+        ws = sh.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        return {}
+    answers: dict[str, dict[str, str]] = {}
+    for r in ws.get_all_records():
+        ts = pd.to_datetime(str(r.get(FORM_TIMESTAMP_COLUMN, "")), errors="coerce")
+        if pd.isna(ts):
+            continue
+        qa = {
+            str(q): str(a)
+            for q, a in r.items()
+            if q != FORM_TIMESTAMP_COLUMN and str(a).strip() and "SOXAI" not in str(q)
+        }
+        if qa:
+            answers[ts.strftime("%Y-%m-%d")] = qa
+    return answers
 
 
 def get_or_create_worksheet(sh: gspread.Spreadsheet, title: str, rows: int = 100, cols: int = 10):

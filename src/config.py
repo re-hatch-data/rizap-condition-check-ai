@@ -43,6 +43,11 @@ COMMENT_COLUMN_HEADER = "コメント"
 DATE_COLUMN = "日付"
 UID_COLUMN = "ユーザーID"
 
+# 当日アンケート（Googleフォーム）の回答シート。Q1体調・Q2業務負荷・Q3食事の予定・
+# Q5困りごと等をプロンプトに含める（Q4 SOXAI RINGの同期状況は運用情報なので除外）。
+FORM_SHEET = "フォームの回答 1"
+FORM_TIMESTAMP_COLUMN = "タイムスタンプ"
+
 
 @dataclass
 class Settings:
@@ -51,7 +56,10 @@ class Settings:
     gcp_location: str = field(default_factory=_env("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
     # --- Google Drive / Sheets ---
-    cond_folder_id: str = field(default_factory=_env("COND_FOLDER_ID"))
+    # 既定値は「コンディションチェック」親フォルダ（確定済み）。別環境で試す場合のみ上書きする。
+    cond_folder_id: str = field(
+        default_factory=_env("COND_FOLDER_ID", "1O7oYAdZ6opu_P9tZ-_0idO__E_WXKcGG")
+    )
 
     # --- Gemini (Vertex AI経由) ---
     gemini_model: str = field(default_factory=_env("GEMINI_MODEL", "gemini-2.5-flash"))

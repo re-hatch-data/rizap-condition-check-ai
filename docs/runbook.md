@@ -2,21 +2,27 @@
 
 デプロイ先はRIZAP側の**既存GCPプロジェクト `rizap-marketing`**（BigQuery・既存分析エージェント
 `rizap_data_analytics_aget` と同居。2026-07-10に新規プロジェクト払い出し方針から変更）。
+認証は rizap-soxai-ring が使用中の **soxai-ring-runner サービスアカウントを再利用**する
+（対象スプレッドシートへのアクセス実績が既にあるため、共有設定もOAuth認可も不要）。
 
 ## 当日の1コマンド構築（RIZAP担当者向け）
 
-前提: gcloud CLIログイン済み（対象プロジェクトのEditor権限）、python3、
-`credentials/oauth-client.json` 配置済み（下記B-3）。
+前提: gcloud CLIログイン済み（対象プロジェクトのEditor権限）。それだけ。
 
 ```bash
 git clone https://github.com/re-hatch-data/rizap-condition-check-ai.git
 cd rizap-condition-check-ai
-export COND_FOLDER_ID=<Google DriveのフォルダID>
 ./deploy/bootstrap.sh <PROJECT_ID>
 ```
 
-途中でブラウザが1回開くので、対象データにアクセスできるRIZAP側Googleアカウントで
-ログイン・許可する。最後に即時1回実行まで行い、シートへの反映を確認できる。
+これで API有効化 → IAM付与 → SAキーのSecret登録 → Cloud Run Jobs + Schedulerデプロイ →
+即時1回実行（シート反映の確認）まで通しで完了する。
+
+- 対象フォルダIDは既定値としてコード側に設定済み（変える場合は `COND_FOLDER_ID` 環境変数）
+- SAの名前が `soxai-ring-runner@<PROJECT_ID>.iam.gserviceaccount.com` と異なる場合は
+  `SA_EMAIL=<正式なSAメール> ./deploy/bootstrap.sh <PROJECT_ID>` で指定
+- 手元に既存のSAキーJSONがある場合は `SA_KEY_FILE=<パス>` で渡せる（無ければ新規キーを発行し、
+  Secret Manager登録後にローカルからは削除する）
 
 以下は個別に実行する場合の詳細手順。
 
@@ -34,69 +40,66 @@ export COND_FOLDER_ID=<Google DriveのフォルダID>
 
 2. `pytest` / `ruff check src tests scripts` が通ることを確認
 
-3. RIZAP側へ `docs/iam-request.md` を送付（実行アカウントへのEditor権限付与などの事前依頼）
+3. RIZAP側へ `docs/iam-request.md` を送付（Editor権限付与・SA名の確認などの事前依頼）
 
-## B. 対象プロジェクトへのアクセスが整い次第
+## B. 対象プロジェクトへのアクセスが整い次第（個別実行する場合）
 
-1. `.env` の `GOOGLE_CLOUD_PROJECT` / `COND_FOLDER_ID` を記入
-
-2. 初回GCPセットアップ
+1. 初回GCPセットアップ（API有効化・IAM付与・Secretの箱作成）
 
    ```bash
    gcloud auth login
    ./deploy/setup_gcp.sh <PROJECT_ID>
    ```
 
-   IAM付与で失敗した場合は `docs/iam-request.md` の内容をRIZAP側に依頼する。
+   IAM付与で失敗した場合は `docs/iam-request.md` の権限一覧をRIZAP側に依頼する。
 
-3. OAuthクライアントを作成（GCPコンソール → APIとサービス → 認証情報 →
-   OAuthクライアントID → デスクトップアプリ）→ JSONを `credentials/oauth-client.json` に配置。
-   OAuth同意画面のユーザータイプは「内部」を選ぶ（Google Workspace内のアカウントで使う限り
-   アプリ検証は不要）
-
-4. OAuthトークンを生成（対象のRIZAP側Googleアカウントでログイン・許可）
+2. SAキーをSecret Managerに登録
 
    ```bash
-   python -m scripts.generate_oauth_token
-   gcloud secrets create oauth-token --data-file=credentials/oauth-token.json --project <PROJECT_ID>
+   gcloud iam service-accounts keys create /tmp/sa-key.json \
+     --iam-account soxai-ring-runner@<PROJECT_ID>.iam.gserviceaccount.com
+   gcloud secrets versions add soxai-sa-key --data-file=/tmp/sa-key.json
+   rm /tmp/sa-key.json
    ```
 
-5. 事前診断（権限・API有効化の確認）
+3. 事前診断（権限・API有効化の確認。ローカルで実行する場合）
 
    ```bash
-   export GOOGLE_APPLICATION_CREDENTIALS=  # 未設定でOK。OAuthトークンを優先的に使う
+   export GOOGLE_APPLICATION_CREDENTIALS=<SAキーJSONのパス>
    python -m scripts.preflight
    python -m scripts.preflight --ask   # 被験者1名分のコメント生成までE2Eで確認
    ```
 
-   NGが出た項目は `docs/iam-request.md` の該当箇所をRIZAP側に依頼する。
-
-6. Cloud Run Jobs + Cloud Scheduler デプロイ
+4. Cloud Run Jobs + Cloud Scheduler デプロイ
 
    ```bash
-   export COND_FOLDER_ID=<Google DriveのフォルダID>
    ./deploy/deploy.sh <PROJECT_ID>
    ```
 
-7. 即時1回実行して動作確認
+5. 即時1回実行して動作確認
 
    ```bash
-   gcloud run jobs execute condition-check-ai --project <PROJECT_ID> --region asia-northeast1
-   gcloud run jobs executions list --job condition-check-ai --project <PROJECT_ID> --region asia-northeast1
+   gcloud run jobs execute condition-check-ai --project <PROJECT_ID> --region asia-northeast1 --wait
    ```
 
    対象スプレッドシートを開き、`SOXAI_daily` のB列にコメントが入っているか、
    `AIコメント_ログ` シートが作成されているかを確認する。
 
-8. 本番運用開始：Cloud Schedulerが毎朝 JST 8:30（SOXAI Ring同期の後）に自動実行する。
+6. 本番運用開始：Cloud Schedulerが毎朝 JST 8:30（SOXAI Ring同期の後）に自動実行する。
    運用開始後しばらくは、翌朝もコメント列が正しく再構築されているか（上書き対策が
    機能しているか）を数日分は目視確認することを推奨。
+   当日アンケートの提出が8:30より遅い被験者が多い場合は、`SCHEDULE` 環境変数で
+   起動時刻を遅らせて再デプロイする（例: `SCHEDULE="30 9 * * *" ./deploy/deploy.sh <PROJECT_ID>`）。
 
 ## トラブルシュート
 
 - **コメント列が翌朝消えている** → Cloud Schedulerの実行がSOXAI Ring同期より前になっていないか
   （`gcloud scheduler jobs describe condition-check-ai` でスケジュールを確認）
 - **Vertex AI呼び出しが403** → `roles/aiplatform.user` の付与、およびVertex AI API
-  （`aiplatform.googleapis.com`）が有効化されているか確認（`docs/iam-request.md` ③）
-- **Drive/Sheetsアクセスが失敗する** → OAuthトークンの有効期限切れ・失効の可能性。
-  `scripts/generate_oauth_token.py` を再実行し、`gcloud secrets versions add` で更新する
+  （`aiplatform.googleapis.com`）が有効化されているか確認（`docs/iam-request.md` 参照）
+- **Drive/Sheetsアクセスが403/404** → soxai-ring-runner に対象フォルダのアクセス権があるか
+  （rizap-soxai-ring の同期が正常に動いていれば権限はあるはず）、SAキーが失効していないかを確認。
+  キーを再発行する場合: `gcloud iam service-accounts keys create ...` →
+  `gcloud secrets versions add soxai-sa-key --data-file=...`
+- **アンケートがコメントに反映されない** → 提出時刻がジョブ実行(8:30)より後の可能性。
+  翌朝の実行で自動的に再生成・反映される
