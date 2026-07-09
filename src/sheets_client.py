@@ -1,13 +1,15 @@
 """Google Drive / Sheets アクセス。
 
 被験者ごとの「コンディションチェック」スプレッドシートを Drive フォルダから解決し、
-SOXAI_daily シートの読み取り・コメント列の書き込みを行う。
+SOXAI_daily・フォームの回答シートを読み取る。コメントの出力（AIコメント_ログシート）は
+comment_store が担う。
 
-認証は「ユーザーもログインできるRIZAP側Googleアカウント」を使う方針のため、
-サービスアカウントへのフォルダ共有ではなく、そのアカウントでの1回限りのOAuth認可
-（`scripts/generate_oauth_token.py`）で発行したトークンファイルを使う。
-トークンファイルが無い環境（別方式に切り替えた場合など）では、通常のADC
-（GOOGLE_APPLICATION_CREDENTIALS やアタッチ済みサービスアカウント）にフォールバックする。
+認証は既存パイプライン rizap-soxai-ring と同じサービスアカウント（soxai-runner）を
+再利用する。対象スプレッドシートへのアクセス実績が既にあるSAのため、追加の共有設定が不要。
+本番(Cloud Run Jobs)ではSAキーをSecret Manager経由でマウントし、
+GOOGLE_APPLICATION_CREDENTIALS で渡す（通常のADC解決）。
+GOOGLE_OAUTH_TOKEN_FILE にOAuthトークンファイルがある場合はそちらを優先する
+（ローカル検証用のフォールバック。`scripts/generate_oauth_token.py` で生成できる）。
 """
 
 import logging
@@ -21,10 +23,14 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 
+from src.config import FORM_TIMESTAMP_COLUMN
+
 logger = logging.getLogger(__name__)
 
+# Driveはフォルダ走査（読み取り）にしか使わないため readonly に絞る。
+# シートへの書き込みは spreadsheets スコープで行う。
 SCOPES = [
-    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/drive.readonly",
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
@@ -115,85 +121,33 @@ def load_daily_dataframe(gc: gspread.Client, spreadsheet_id: str, sheet_name: st
     return pd.DataFrame(records)
 
 
+def load_form_answers(sh: gspread.Spreadsheet, sheet_name: str) -> dict[str, dict[str, str]]:
+    """当日アンケート（「フォームの回答 1」）を読み込み、日付(%Y-%m-%d) → {設問: 回答} を返す。
+
+    同じ日に複数回答がある場合は後の回答で上書きする。空欄の設問と、運用情報である
+    SOXAI RINGの同期状況（Q4）は除外する。シートが無ければ空dictを返す。
+    """
+    try:
+        ws = sh.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        return {}
+    answers: dict[str, dict[str, str]] = {}
+    for r in ws.get_all_records():
+        ts = pd.to_datetime(str(r.get(FORM_TIMESTAMP_COLUMN, "")), errors="coerce")
+        if pd.isna(ts):
+            continue
+        qa = {
+            str(q): str(a)
+            for q, a in r.items()
+            if q != FORM_TIMESTAMP_COLUMN and str(a).strip() and "SOXAI" not in str(q)
+        }
+        if qa:
+            answers[ts.strftime("%Y-%m-%d")] = qa
+    return answers
+
+
 def get_or_create_worksheet(sh: gspread.Spreadsheet, title: str, rows: int = 100, cols: int = 10):
     try:
         return sh.worksheet(title)
     except gspread.WorksheetNotFound:
         return sh.add_worksheet(title=title, rows=rows, cols=cols)
-
-
-def write_comment_column(
-    sheets_svc,
-    sh: gspread.Spreadsheet,
-    sheet_name: str,
-    comment_header: str,
-    comments_in_row_order: list[str],
-) -> None:
-    """SOXAI_daily の日付列（A列）の隣（B列）にコメント列を挿入して書き込み、
-    元データ列（C列以降）を折りたたむ。
-    """
-    ws = sh.worksheet(sheet_name)
-    sheet_id = ws.id
-    n_cols = ws.col_count
-
-    # 同一日にリトライ実行した場合など、既にコメント列が入っていれば列挿入をスキップする
-    # (SOXAI Ring側が再構築した直後は毎回このヘッダーが無い状態から始まる)
-    already_present = ws.acell("B1").value == comment_header
-    if not already_present:
-        requests = [
-            {
-                "insertDimension": {
-                    "range": {
-                        "sheetId": sheet_id,
-                        "dimension": "COLUMNS",
-                        "startIndex": 1,
-                        "endIndex": 2,
-                    },
-                    "inheritFromBefore": False,
-                }
-            }
-        ]
-        sheets_svc.spreadsheets().batchUpdate(
-            spreadsheetId=sh.id, body={"requests": requests}
-        ).execute()
-        n_cols += 1
-
-    values = [[comment_header]] + [[c] for c in comments_in_row_order]
-    sheets_svc.spreadsheets().values().update(
-        spreadsheetId=sh.id,
-        range=f"'{sheet_name}'!B1:B{len(values)}",
-        valueInputOption="RAW",
-        body={"values": values},
-    ).execute()
-
-    _collapse_columns(sheets_svc, sh.id, sheet_id, start_index=2, end_index=n_cols + 1)
-
-
-def _collapse_columns(sheets_svc, spreadsheet_id: str, sheet_id: int, start_index: int, end_index: int) -> None:
-    """元データ列（コメント列より後ろ）をグループ化して折りたたむ。失敗しても致命的ではないので握りつぶす。"""
-    group_range = {
-        "sheetId": sheet_id,
-        "dimension": "COLUMNS",
-        "startIndex": start_index,
-        "endIndex": end_index,
-    }
-    try:
-        sheets_svc.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={"requests": [{"addDimensionGroup": {"range": group_range}}]},
-        ).execute()
-        sheets_svc.spreadsheets().batchUpdate(
-            spreadsheetId=spreadsheet_id,
-            body={
-                "requests": [
-                    {
-                        "updateDimensionGroup": {
-                            "dimensionGroup": {"range": group_range, "depth": 1, "collapsed": True},
-                            "fields": "collapsed",
-                        }
-                    }
-                ]
-            },
-        ).execute()
-    except Exception:
-        logger.warning("列の折りたたみに失敗しました（無視して続行）", exc_info=True)

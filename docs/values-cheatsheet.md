@@ -2,52 +2,30 @@
 
 ## 登場する値の一覧
 
-| 値 | どこから取る | どこに入れる | 備考 |
+| 値 | 確定値 | どこに入れる | 備考 |
 |---|---|---|---|
-| **PROJECT_ID** | RIZAP側で新規GCPプロジェクトを作成後に確定 | デプロイコマンドの引数 | 例: `rizap-condition-check` |
-| **COND_FOLDER_ID** | 被験者コンディションチェック親フォルダのDrive URL | `.env` / デプロイ時の環境変数 | 既存の `rizap-soxai-ring` と共通の値 |
-| **oauth-client.json** | RIZAP側GCPプロジェクトのコンソール →「認証情報」→ OAuthクライアントID作成（デスクトップアプリ） | ローカルの `credentials/oauth-client.json`（gitignore済み） | REHATCH側で作成可 |
-| **oauth-token.json** | `scripts/generate_oauth_token.py` 実行時にRIZAP側アカウントでログイン・許可して生成 | Secret Manager `oauth-token` | ログイン情報はREHATCH側も把握しているため、RIZAP同席なしで実行可能 |
-| **GEMINI_MODEL** | Vertex AIで提供されているGeminiモデルID | `.env` / デプロイ時の環境変数 | 既定は `gemini-2.5-flash` |
+| **PROJECT_ID** | `rizap-marketing` | `deploy/bootstrap.sh` の引数 | 既存プロジェクト（BigQuery・既存分析エージェントと同居） |
+| **SA_EMAIL** | `soxai-runner@rizap-marketing.iam.gserviceaccount.com` | スクリプトの既定値に設定済み | rizap-soxai-ring と同じSA。異なる場合のみ `SA_EMAIL=` で上書き |
+| **COND_FOLDER_ID** | `1O7oYAdZ6opu_P9tZ-_0idO__E_WXKcGG` | コードの既定値に設定済み | コンディションチェック親フォルダ（Drive URLの `/folders/` 以降） |
+| **SAキーJSON** | bootstrap実行時に自動発行 | Secret Manager `soxai-sa-key` | 手元にキーがあれば `SA_KEY_FILE=` で指定可。ローカルには残さない |
+| **GEMINI_MODEL** | `gemini-2.5-flash`（既定） | デプロイ時の環境変数 | Vertex AI経由。変更は `GEMINI_MODEL=` で |
 
-**流れ**: RIZAPが新規GCPプロジェクトを作成 → PROJECT_ID確定 → `deploy/setup_gcp.sh` 実行 →
-OAuthクライアント作成 → `scripts/generate_oauth_token.py` でトークン生成 → Secret Manager登録 →
-`deploy/deploy.sh` でCloud Run Jobs + Cloud Scheduler設定
+**流れ**: gcloudログイン（Editor権限） → `deploy/bootstrap.sh rizap-marketing` →
+内部で API有効化 → IAM付与 → SAキー発行・Secret登録 → Cloud Run Jobs + Scheduler設定 →
+即時1回実行して `AIコメント_ログ` シートへの反映を確認
 
----
-
-## ① OAuthクライアントの作成場所（GCPコンソール）
-
-```
-APIとサービス → 認証情報 → + 認証情報を作成 → OAuthクライアントID
-  アプリケーションの種類: デスクトップアプリ
-  → 作成後、JSONをダウンロードして credentials/oauth-client.json として配置
-```
-
-初回のみ、OAuth同意画面の設定（テストユーザーとしてRIZAP側の対象アカウントを追加、
-もしくは社内限定公開）が必要な場合がある。
-
-## ② トークン生成（ローカル、REHATCH側で実施可）
+## SAキーの更新（失効・ローテーション時）
 
 ```bash
-python -m scripts.generate_oauth_token
+gcloud iam service-accounts keys create /tmp/sa-key.json \
+  --iam-account soxai-runner@rizap-marketing.iam.gserviceaccount.com
+gcloud secrets versions add soxai-sa-key --data-file=/tmp/sa-key.json --project rizap-marketing
+rm /tmp/sa-key.json
 ```
 
-ブラウザが開くので、RIZAP側の対象Googleアカウントでログイン・許可する。
-`credentials/oauth-token.json` が生成されるので、Secret Managerに登録する:
+（Cloud Run Jobsは実行のたびに `:latest` を読むため、再デプロイ不要）
 
-```bash
-gcloud secrets create oauth-token --data-file=credentials/oauth-token.json --project <PROJECT_ID>
-```
+## （参考）OAuthフォールバック
 
-## ③ Cloud Run Jobsへの反映
-
-`deploy/deploy.sh` が `/secrets/oauth-token.json` としてマウントする設定を含んでいるため、
-Secret登録後にデプロイ（または再デプロイ）すれば自動的に反映される。
-トークン自体を更新したい場合（再認可等）は:
-
-```bash
-gcloud secrets versions add oauth-token --data-file=credentials/oauth-token.json --project <PROJECT_ID>
-```
-
-（Cloud Run Jobsは実行のたびに`:latest`を読むため、再デプロイ不要）
+ローカル検証でSAキーを使いたくない場合のみ、`scripts/generate_oauth_token.py` で
+OAuthトークンを生成し `GOOGLE_OAUTH_TOKEN_FILE` に指定する。本番では使わない。

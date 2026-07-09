@@ -1,14 +1,17 @@
-# セットアップ残タスク整理（2026-07-09時点）
+# セットアップ残タスク整理（2026-07-10時点）
 
 ## ⏱️ ネクスト
 
-**ボール = RIZAP（新規GCPプロジェクトの払い出し）。これ待ち。**
-REHATCH側の実装（本リポジトリ）は完了済み。
+**明日（7/11）のRIZAPミーティングで、既存プロジェクト `rizap-marketing` に構築する。**
+新規プロジェクトの払い出しは不要になった。REHATCH側の実装（本リポジトリ）は完了済み。
 
-1. ⏳ RIZAPに新規GCPプロジェクトの払い出しを依頼 → 依頼文: `docs/iam-request.md`
-2. ⏳ プロジェクトID確定後、`deploy/setup_gcp.sh` → OAuthトークン生成 → `deploy/deploy.sh`
-   （手順は `docs/runbook.md` B節）
-3. ⏸ デプロイ後、E2E動作確認（`scripts/preflight.py --ask` → 実シートへの反映確認）
+1. ⏳ 事前準備: 正式なプロジェクトIDと、soxai-runner サービスアカウントの
+   正式なメールアドレスを確認（`docs/iam-request.md` の①〜③）
+2. ⏳ ミーティング当日、Editor権限を持つ担当が `deploy/bootstrap.sh <PROJECT_ID>` を実行
+   （手順: `docs/runbook.md` 冒頭。OAuth・ブラウザ認可は不要）
+3. ⏸ 構築後、E2E動作確認（bootstrap末尾の即時実行 → 実シートへの反映確認 →
+   翌朝以降、再スタンプが機能しているか数日目視）
+4. ⏸ アンケート提出時刻の実態を確認し、必要なら `SCHEDULE` で起動時刻を調整
 
 ## A. REHATCH側で今すぐできること（RIZAPからの返答を待たずに）
 
@@ -18,19 +21,19 @@ REHATCH側の実装（本リポジトリ）は完了済み。
       （GCPプロジェクトが無くても、個人のGCPプロジェクトで動作自体は確認可能）
 - [ ] SD逸脱度の閾値（現在は初期値2SD）の妥当性を、実データのサンプルで確認
 
-## B. GCPプロジェクト払い出し後の流れ
+## B. 構築当日の流れ
 
 ```
-1. (RIZAP) 新規GCPプロジェクト作成・課金設定
-2. (REHATCH) deploy/setup_gcp.sh 実行(API有効化・SA作成・IAM付与)
-   → IAM付与が失敗する場合は (RIZAP) に依頼
-3. (REHATCH) OAuthクライアント作成 → generate_oauth_token.py 実行(RIZAP側アカウントでログイン)
-4. (REHATCH) preflight.py で疎通確認 → deploy.sh でデプロイ
-5. (合同) 実シートでの動作確認 → 本番運用開始
+1. (RIZAP) 実行担当アカウントへ rizap-marketing のEditor権限付与、SA名の確認
+2. (合同)  deploy/bootstrap.sh <PROJECT_ID> を実行
+   - 内部で setup_gcp.sh(API有効化・IAM付与) → SAキーのSecret登録 → デプロイ
+   - IAM付与が失敗する場合は (RIZAP) のIAM管理者に依頼
+   - 最後に即時1回実行まで自動で行う
+3. (合同) 実シートでの動作確認 → 本番運用開始
 ```
 
 ## 運用開始前に決めること（PoC後でも可）
 
 - [ ] 「適正値」の基準（個人内基準か、チーム/全体基準か、両方併用か）
 - [ ] SD逸脱度の具体的な閾値の最終決定（`SD_THRESHOLD`環境変数で調整可能）
-- [ ] Vertex AI経由のGeminiモデルの料金感の確認
+- [ ] Agent Platform（旧Vertex AI）経由のGeminiモデルの料金感の確認
