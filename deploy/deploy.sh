@@ -23,7 +23,7 @@ SA_EMAIL="${SA_EMAIL:-condition-check-ai@${PROJECT_ID}.iam.gserviceaccount.com}"
 ENV_VARS="GOOGLE_CLOUD_PROJECT=${PROJECT_ID}"
 ENV_VARS="${ENV_VARS},GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION:-us-east5}"
 ENV_VARS="${ENV_VARS},COND_FOLDER_ID=${COND_FOLDER_ID:?COND_FOLDER_ID を環境変数で指定してください}"
-ENV_VARS="${ENV_VARS},CLAUDE_MODEL=${CLAUDE_MODEL:-claude-sonnet-4-5@20250929}"
+ENV_VARS="${ENV_VARS},GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}"
 ENV_VARS="${ENV_VARS},GOOGLE_OAUTH_TOKEN_FILE=/secrets/oauth-token.json"
 
 echo "==> Cloud Run Jobs デプロイ"

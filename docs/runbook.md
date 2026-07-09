@@ -74,7 +74,7 @@
 
 - **コメント列が翌朝消えている** → Cloud Schedulerの実行がSOXAI Ring同期より前になっていないか
   （`gcloud scheduler jobs describe condition-check-ai` でスケジュールを確認）
-- **Vertex AI呼び出しが403** → `roles/aiplatform.user` の付与、およびModel GardenでのClaude
-  モデル利用規約同意が完了しているか確認（`docs/iam-request.md` ③）
+- **Vertex AI呼び出しが403** → `roles/aiplatform.user` の付与、およびVertex AI API
+  （`aiplatform.googleapis.com`）が有効化されているか確認（`docs/iam-request.md` ③）
 - **Drive/Sheetsアクセスが失敗する** → OAuthトークンの有効期限切れ・失効の可能性。
   `scripts/generate_oauth_token.py` を再実行し、`gcloud secrets versions add` で更新する

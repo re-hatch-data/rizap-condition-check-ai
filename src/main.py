@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 
-def process_subject(gc, sheets_svc, claude_client, subject: dict) -> None:
+def process_subject(gc, sheets_svc, genai_client, subject: dict) -> None:
     name = subject["folder_name"]
     spreadsheet_id = subject["spreadsheet_id"]
     logger.info("=== %s (%s) ===", name, spreadsheet_id)
@@ -60,8 +60,8 @@ def process_subject(gc, sheets_svc, claude_client, subject: dict) -> None:
 
         context = row_context(row, TARGET_METRICS)
         comment = generate_comment(
-            claude_client,
-            settings.claude_model,
+            genai_client,
+            settings.gemini_model,
             context,
             settings.comment_min_len,
             settings.comment_max_len,
@@ -89,7 +89,7 @@ def main() -> int:
         return 1
 
     drive_svc, sheets_svc, gc = get_google_services()
-    claude_client = build_client(settings)
+    genai_client = build_client(settings)
 
     subjects = list_subject_spreadsheets(drive_svc, settings.cond_folder_id)
     logger.info("対象被験者数: %d", len(subjects))
@@ -97,7 +97,7 @@ def main() -> int:
     failures = []
     for subject in subjects:
         try:
-            process_subject(gc, sheets_svc, claude_client, subject)
+            process_subject(gc, sheets_svc, genai_client, subject)
         except Exception:
             logger.exception("処理に失敗しました: %s", subject.get("folder_name"))
             failures.append(subject.get("folder_name"))
