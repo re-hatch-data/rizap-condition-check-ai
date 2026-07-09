@@ -48,13 +48,13 @@ UID_COLUMN = "ユーザーID"
 class Settings:
     # --- Google Cloud ---
     gcp_project: str = field(default_factory=_env("GOOGLE_CLOUD_PROJECT"))
-    gcp_location: str = field(default_factory=_env("GOOGLE_CLOUD_LOCATION", "us-east5"))
+    gcp_location: str = field(default_factory=_env("GOOGLE_CLOUD_LOCATION", "us-central1"))
 
     # --- Google Drive / Sheets ---
     cond_folder_id: str = field(default_factory=_env("COND_FOLDER_ID"))
 
-    # --- Claude (Vertex AI経由) ---
-    claude_model: str = field(default_factory=_env("CLAUDE_MODEL", "claude-sonnet-4-5@20250929"))
+    # --- Gemini (Vertex AI経由) ---
+    gemini_model: str = field(default_factory=_env("GEMINI_MODEL", "gemini-2.5-flash"))
     comment_min_len: int = field(default_factory=_env_int("COMMENT_MIN_LEN", 40))
     comment_max_len: int = field(default_factory=_env_int("COMMENT_MAX_LEN", 60))
 

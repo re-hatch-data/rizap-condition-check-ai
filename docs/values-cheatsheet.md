@@ -8,7 +8,7 @@
 | **COND_FOLDER_ID** | 被験者コンディションチェック親フォルダのDrive URL | `.env` / デプロイ時の環境変数 | 既存の `rizap-soxai-ring` と共通の値 |
 | **oauth-client.json** | RIZAP側GCPプロジェクトのコンソール →「認証情報」→ OAuthクライアントID作成（デスクトップアプリ） | ローカルの `credentials/oauth-client.json`（gitignore済み） | REHATCH側で作成可 |
 | **oauth-token.json** | `scripts/generate_oauth_token.py` 実行時にRIZAP側アカウントでログイン・許可して生成 | Secret Manager `oauth-token` | ログイン情報はREHATCH側も把握しているため、RIZAP同席なしで実行可能 |
-| **CLAUDE_MODEL** | Vertex AIのModel Gardenで提供されているClaudeモデルID | `.env` / デプロイ時の環境変数 | RIZAP側プロジェクトでの提供リージョン・有効化状況を要確認 |
+| **GEMINI_MODEL** | Vertex AIで提供されているGeminiモデルID | `.env` / デプロイ時の環境変数 | 既定は `gemini-2.5-flash` |
 
 **流れ**: RIZAPが新規GCPプロジェクトを作成 → PROJECT_ID確定 → `deploy/setup_gcp.sh` 実行 →
 OAuthクライアント作成 → `scripts/generate_oauth_token.py` でトークン生成 → Secret Manager登録 →
