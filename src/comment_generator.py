@@ -1,13 +1,14 @@
-"""Vertex AI経由でClaudeを呼び出し、日次コメント（特徴的な値＋一言総評）を生成する。
+"""Vertex AI経由でGeminiを呼び出し、日次コメント（特徴的な値＋一言総評）を生成する。
 
-Anthropic直APIキーは使わず、RIZAP側GCPプロジェクトのVertex AI権限のみで完結させる
-（anthropic[vertex] の AnthropicVertex クライアントを使用）。
+Geminiは純正のGoogleモデルのため、RIZAP側GCPプロジェクトでVertex AI APIを有効化するだけで
+利用できる（Model Garden経由のパートナーモデルのような追加の利用規約同意が不要）。
 """
 
 import logging
 
 import pandas as pd
-from anthropic import AnthropicVertex
+from google import genai
+from google.genai import types
 
 from src.config import Settings
 
@@ -22,8 +23,8 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_client(settings: Settings) -> AnthropicVertex:
-    return AnthropicVertex(project_id=settings.gcp_project, region=settings.gcp_location)
+def build_client(settings: Settings) -> genai.Client:
+    return genai.Client(vertexai=True, project=settings.gcp_project, location=settings.gcp_location)
 
 
 def build_prompt(context: dict, min_len: int, max_len: int) -> str:
@@ -49,15 +50,14 @@ def _fmt(v) -> str:
     return f"{v:+.1f}" if isinstance(v, (int, float)) else str(v)
 
 
-def generate_comment(client: AnthropicVertex, model: str, context: dict, min_len: int, max_len: int) -> str:
+def generate_comment(client: genai.Client, model: str, context: dict, min_len: int, max_len: int) -> str:
     prompt = build_prompt(context, min_len, max_len)
-    response = client.messages.create(
+    response = client.models.generate_content(
         model=model,
-        max_tokens=300,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": prompt}],
+        contents=prompt,
+        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, max_output_tokens=300),
     )
-    text = "".join(block.text for block in response.content if block.type == "text").strip()
+    text = (response.text or "").strip()
     if len(text) > max_len + 10:
         logger.warning("コメントが想定より長いため切り詰めます（%d字）: %s", len(text), text)
         text = text[:max_len]

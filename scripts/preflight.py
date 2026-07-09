@@ -73,17 +73,19 @@ def main() -> int:
     ok &= check("Sheets: SOXAI_daily読み取り", _sheets)
 
     def _vertex():
+        from google.genai import types
+
         from src.comment_generator import build_client
 
         client = build_client(settings)
-        resp = client.messages.create(
-            model=settings.claude_model,
-            max_tokens=16,
-            messages=[{"role": "user", "content": "OK とだけ返してください"}],
+        resp = client.models.generate_content(
+            model=settings.gemini_model,
+            contents="OK とだけ返してください",
+            config=types.GenerateContentConfig(max_output_tokens=16),
         )
-        return "".join(b.text for b in resp.content if b.type == "text").strip()
+        return (resp.text or "").strip()
 
-    ok &= check(f"Vertex AI: Claude呼び出し（{settings.claude_model} @ {settings.gcp_location}）", _vertex)
+    ok &= check(f"Vertex AI: Gemini呼び出し（{settings.gemini_model} @ {settings.gcp_location}）", _vertex)
 
     if args.ask and "df" in df_holder and not df_holder["df"].empty:
         from src.comment_generator import build_client, generate_comment
@@ -93,7 +95,7 @@ def main() -> int:
         context = row_context(last_row, TARGET_METRICS)
         client = build_client(settings)
         comment = generate_comment(
-            client, settings.claude_model, context, settings.comment_min_len, settings.comment_max_len
+            client, settings.gemini_model, context, settings.comment_min_len, settings.comment_max_len
         )
         logger.info("--- E2E生成結果（%s / %s） ---\n%s", subjects[0]["folder_name"], context["date"], comment)
 
