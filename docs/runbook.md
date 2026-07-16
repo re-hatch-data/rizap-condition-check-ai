@@ -18,8 +18,8 @@ cd rizap-condition-check-ai
 これで API有効化 → IAM付与 → SAキーのSecret登録 → Cloud Run Jobs + Schedulerデプロイ →
 即時1回実行（シート反映の確認）まで通しで完了する。
 
-- **実行スケジュールはJST7:00〜8:55の5分おき固定**。SOXAI Ring同期の完了（データ到着）を
-  自動検知して処理するため、「毎朝何時に動かすか」を決める必要はない
+- **実行スケジュールは毎朝JST9:00**。SOXAI Ring同期の完了実績（8:15〜8:40頃）の後に
+  バッファを見て実行する。変更は `SCHEDULE` 環境変数で可能
   （詳細は [architecture.md](architecture.md)）
 - 対象フォルダIDは既定値としてコード側に設定済み（変える場合は `COND_FOLDER_ID` 環境変数）
 - SAの名前が `soxai-runner@<PROJECT_ID>.iam.gserviceaccount.com` と異なる場合は
@@ -88,9 +88,10 @@ cd rizap-condition-check-ai
    対象スプレッドシートを開き、`AIコメント_ログ` シートが作成され、
    日付ごとのコメントが入っているかを確認する（SOXAI_daily自体には書き込まない）。
 
-6. 本番運用開始：Cloud SchedulerがJST7:00〜8:55の間5分おきに実行し、SOXAI Ring同期の
-   完了を自動検知して処理する。運用開始後しばらくは、当日分のコメントが毎朝追記されて
-   いるかを数日分は目視確認することを推奨。
+6. 本番運用開始：Cloud Schedulerが毎朝JST9:00（SOXAI Ring同期の完了後）に実行する。
+   運用開始後しばらくは、当日分のコメントが毎朝追記されているかを数日分は目視確認
+   することを推奨。同期の遅延で9:00に間に合わない日が続く場合はスケジュールを後ろへ
+   ずらす（`gcloud scheduler jobs update http condition-check-ai --schedule="0 10 * * *"`等）。
 
 ## トラブルシュート
 

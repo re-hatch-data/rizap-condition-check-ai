@@ -10,9 +10,9 @@
 # Usage: deploy/bootstrap.sh <PROJECT_ID>
 #   例: deploy/bootstrap.sh rizap-marketing
 #
-# 実行スケジュールはJST7:00〜8:55の5分おき固定(詳細はdeploy.shのコメント参照)。
-# 「毎朝何時に動かすか」を決める必要はない(SOXAI Ring同期の完了を自動検知して動く)。
-# 特殊な事情で変更したい場合のみ SCHEDULE 環境変数で上書きできる(cron式、Asia/Tokyo)。
+# 実行スケジュールは毎朝JST9:00(SOXAI Ring同期の完了実績8:15〜8:40頃の後。
+# 詳細はdeploy.shのコメント参照)。変更したい場合は SCHEDULE 環境変数で
+# 上書きできる(cron式、Asia/Tokyo)。
 # REGION は環境変数で上書き可(既定: asia-northeast1)。
 set -euo pipefail
 
@@ -44,7 +44,7 @@ else
   if [[ -n "${CREATED_KEY}" ]]; then rm -f "${KEY_FILE}"; fi
 fi
 
-echo "==> [3/4] Cloud Run Jobs + Cloud Scheduler デプロイ(JST7:00〜8:55の5分おき)"
+echo "==> [3/4] Cloud Run Jobs + Cloud Scheduler デプロイ(毎朝JST9:00)"
 SA_EMAIL="${SA_EMAIL}" REGION="${REGION}" ./deploy/deploy.sh "${PROJECT_ID}"
 
 echo "==> [4/4] 動作確認(即時1回実行・完了まで待機)"
@@ -54,4 +54,4 @@ gcloud run jobs execute condition-check-ai \
 echo ""
 echo "✅ 構築完了。被験者スプレッドシートを開き、以下を確認してください:"
 echo "   - AIコメント_ログ シートが作成され、日付ごとのコメントが入っている"
-echo "   以降は毎朝JST7:00〜8:55の間、SOXAI Ring同期の完了を検知次第自動実行されます。"
+echo "   以降は毎朝JST9:00(SOXAI Ring同期の完了後)に自動実行されます。"
