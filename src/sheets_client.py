@@ -23,7 +23,7 @@ from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 
-from src.config import FORM_TIMESTAMP_COLUMN
+from src.config import FORM_TIMESTAMP_COLUMN, ROSTER_TRAINING_START_DATE_COLUMN, ROSTER_UID_COLUMN
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +122,8 @@ def load_daily_dataframe(gc: gspread.Client, spreadsheet_id: str, sheet_name: st
 
 
 def load_form_answers(sh: gspread.Spreadsheet, sheet_name: str) -> dict[str, dict[str, str]]:
-    """当日アンケート（「フォームの回答 1」）を読み込み、日付(%Y-%m-%d) → {設問: 回答} を返す。
+    """アンケート（「フォームの回答 1」）を読み込み、日付(%Y-%m-%d) → {設問: 回答} を返す。
+    どの日付の回答を当日コメントに使うか（前日分固定）はmain.py側で決める。
 
     同じ日に複数回答がある場合は後の回答で上書きする。空欄の設問と、運用情報である
     SOXAI RINGの同期状況（Q4）は除外する。シートが無ければ空dictを返す。
@@ -144,6 +145,41 @@ def load_form_answers(sh: gspread.Spreadsheet, sheet_name: str) -> dict[str, dic
         if qa:
             answers[ts.strftime("%Y-%m-%d")] = qa
     return answers
+
+
+def parse_training_start_dates(records: list[dict]) -> dict[str, str]:
+    """マスター名簿の行データから {soxai_id: トレーニング開始日文字列} を作る。
+
+    どちらかが空欄の行はフォールバック対象として辞書に含めない
+    （呼び出し側の dict.get() が None を返し、従来の全履歴基準にフォールバックする）。
+    """
+    result: dict[str, str] = {}
+    for r in records:
+        uid = str(r.get(ROSTER_UID_COLUMN, "")).strip()
+        start_date = str(r.get(ROSTER_TRAINING_START_DATE_COLUMN, "")).strip()
+        if uid and start_date:
+            result[uid] = start_date
+    return result
+
+
+def load_training_start_dates(gc: gspread.Client, roster_sheet_id: str, sheet_name: str) -> dict[str, str]:
+    """マスター名簿（`00_被験者名簿`）を1回読み込み、{soxai_id: トレーニング開始日文字列} を返す。
+
+    名簿はSOXAI Ringの削除対象にも本ジョブの書き込み対象にも含まれない独立したファイルのため、
+    毎回の読み取りだけで済む（各被験者スプレッドシートへの転記は不要）。
+    アクセスできない/シートが無い場合は空dictを返し、全被験者が従来の全履歴基準にフォールバックする。
+    """
+    try:
+        sh = gc.open_by_key(roster_sheet_id)
+        ws = sh.worksheet(sheet_name)
+    except (gspread.SpreadsheetNotFound, gspread.WorksheetNotFound):
+        logger.warning(
+            "マスター名簿(%s / %s)が見つかりません。全被験者が全履歴基準にフォールバックします。",
+            roster_sheet_id,
+            sheet_name,
+        )
+        return {}
+    return parse_training_start_dates(ws.get_all_records())
 
 
 def get_or_create_worksheet(sh: gspread.Spreadsheet, title: str, rows: int = 100, cols: int = 10):

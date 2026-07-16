@@ -1,25 +1,30 @@
 #!/usr/bin/env bash
-# Cloud Run Jobsへのデプロイ + Cloud Schedulerでの毎朝起動設定。
+# Cloud Run Jobsへのデプロイ + Cloud Schedulerでの毎朝繰り返し起動設定。
 #
-# 起動時刻は既存パイプライン rizap-soxai-ring(GitHub Actions, 毎朝JST7:00実行・
-# タイムアウト上限55分)の後に十分なバッファを見てJST8:30とする。
-# 当日分のSOXAI_dailyデータはそちらの同期で書き込まれるため、その後に実行しないと
-# 前日までのデータしか無い状態でコメントを生成することになる
-# (GitHub Actionsのschedule実行は混雑時に開始が数十分遅れる点も考慮)。
-# ※当日アンケート(Googleフォーム)の提出が8:30以降になる被験者がいる場合は
-#   SCHEDULE を遅らせる(未提出でもコメントは生成され、回答は翌朝の再生成で反映される)。
+# 固定時刻に1回だけ起動するのではなく、JST7:00〜8:55の間、5分おきに起動する。
+# ジョブ自体は「その日のデータがまだ無ければ数秒で終了、生成済みなら数秒で終了、
+# 新規に揃っていれば生成」という冪等な作りなので、空振りの実行はごく低コストで、
+# 待機ロジック(sleep等)をコード側に書く必要がない。
+#
+# こうする理由: 既存パイプライン rizap-soxai-ring(GitHub Actions, 毎朝JST7:00実行・
+# タイムアウト上限55分)は、GitHub Actions側のスケジュール実行が混雑時に数十分遅れる
+# ことがあり、完了時刻を固定では読めない。5分おきに確認することで、
+# 「できるだけ早く(早ければ7:05〜10分で検知)」と「リスクをほぼ0にする(最大8:55まで
+# 確認し続ける＝旧来のJST8:30固定より広い安全域)」を両立する。
+# 1日の途中で当日分の生成が完了した後の空振り実行も、キャッシュ判定のみで即終了するため
+# 実質無視できるコストしかかからない。
 #
 # Usage: deploy/deploy.sh <PROJECT_ID>
 #
 # 環境変数(任意で上書き):
 #   SA_EMAIL   実行サービスアカウント(既定: soxai-runner@<PROJECT_ID>...)
 #   REGION     Cloud Runのリージョン(既定: asia-northeast1)
-#   SCHEDULE   Cloud Schedulerのcron式(既定: "30 8 * * *" = 毎朝JST8:30)
+#   SCHEDULE   Cloud Schedulerのcron式(既定: "*/5 7,8 * * *" = JST7:00〜8:55の5分おき)
 set -euo pipefail
 
 PROJECT_ID="${1:?Usage: deploy.sh <PROJECT_ID>}"
 REGION="${REGION:-asia-northeast1}"
-SCHEDULE="${SCHEDULE:-30 8 * * *}"
+SCHEDULE="${SCHEDULE:-*/5 7,8 * * *}"
 JOB_NAME="condition-check-ai"
 SA_EMAIL="${SA_EMAIL:-soxai-runner@${PROJECT_ID}.iam.gserviceaccount.com}"
 

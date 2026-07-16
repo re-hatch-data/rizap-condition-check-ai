@@ -15,19 +15,37 @@ from src.config import TIME_METRICS, TOTAL_SLEEP_COLUMN, Settings
 
 logger = logging.getLogger(__name__)
 
+# 一般的に知られている傾向（査読付き研究・公的機関のガイドライン等、確度の高い情報源のみを採用。
+# 2026-07-15調査。詳細な出典・不採用とした項目の理由は docs/setup-checklist.md 参照）。
+# あくまで「傾向」の参考知識としてGeminiに渡すのみで、判定ロジック(閾値等)には一切使わない。
+REFERENCE_TENDENCIES = (
+    "\n\n【参考知識：一般的に知られている傾向（断定的な基準や医療的な診断として扱わないこと。"
+    "自然に触れられる場合のみ参考にし、無理にすべて盛り込む必要はない）】\n"
+    "- 入眠までの時間は、平均的にはおよそ15分前後とされ、それより明らかに長い状態が続く場合は"
+    "寝つきの困難さのサインとされる傾向がある\n"
+    "- 普段と異なる時刻の就寝・起床が続くと、体への負担につながりうるとされる傾向がある\n"
+    "- 睡眠不足はストレスへの耐性を下げ、逆にストレスも睡眠の質に影響しうるという、"
+    "互いに影響し合う関係にあるとされる\n"
+    "- 1日の歩数は、成人でおよそ8,000歩程度が一つの目安とされることがある"
+)
+
 SYSTEM_PROMPT = (
     "あなたはフィットネス施設のトレーナー向けに、被験者の日次コンディションデータから"
     "一言コメントを作成するアシスタントです。"
     "与えられるのは、睡眠（総睡眠時間・深い/浅い/REM睡眠・入眠潜時・睡眠効率・就寝/起床時刻）、"
-    "ストレス、活動量（歩数・活動消費kcal）の実測値と、その前日比・7日平均比・"
-    "本人平均からのSD逸脱度・欠測日数、および本人の当日アンケート回答"
-    "（体調の自己評価・業務負荷の想定・食事の予定など）です。"
+    "ストレス、活動量（歩数・活動消費kcal）の実測値です。比較の軸は2つあります。"
+    "(1) 施策開始前平均→施策開始後平均：施策全体を通じた長期的な変化。"
+    "(2) 当日の値の、施策開始後平均からのSD逸脱度：直近の異常検知。"
+    "加えて、欠測日数と、本人の前日アンケート回答（体調の自己評価・業務負荷の想定・食事の予定など）"
+    "が与えられます。"
     "「特徴的な値の指摘」と「今日1日をより良く過ごすための具体的なアドバイス」を、"
     "指定された文字数の範囲内の自然な日本語（1〜2文）で書いてください。"
+    "長期的な変化（施策の効果）と当日の異常値の両方が確認できる場合は、両方に触れてもかまいません。"
     "睡眠時間が短い・就寝時刻がいつもより遅い・ストレスが高い等は、"
     "トレーナーがそのまま本人への声かけに使える表現で指摘してください。"
     "アンケート回答がある日は、数値と自己申告のギャップ（本人は元気なつもりだが数値は低い等）にも着目してください。"
     "数値の羅列や絵文字、前置き・見出しは不要です。コメント本文だけを出力してください。"
+    + REFERENCE_TENDENCIES
 )
 
 
@@ -39,29 +57,51 @@ def build_prompt(context: dict, min_len: int, max_len: int) -> str:
     lines = [
         f"日付: {context['date']}",
         f"欠測日数（直近の空白日数）: {context['missing_days']}日",
-        "指標（min系は分、就寝/起床時刻はHH:MM表記・差分は時間、睡眠効率は%）:",
+        "（min系は分、就寝/起床時刻はHH:MM表記・差分は時間、睡眠効率は%）",
     ]
+
+    trend_lines = []
+    today_lines = []
     for metric, m in context["metrics"].items():
         value = m["value"]
         if value is None or (isinstance(value, float) and pd.isna(value)):
             continue
-        flag = "【フラグ】" if m["flagged"] else ""
         unit = "h" if metric in TIME_METRICS else ""
-        prev_diff = _fmt(m["prev_diff"])
-        vs_7d = _fmt(m["vs_7d_avg"])
+
+        pre = m["pre_start_mean"]
+        post = m["post_start_mean"]
+        if _has_value(pre) and _has_value(post):
+            delta = post - pre
+            trend_lines.append(
+                f"- {metric}: 開始前平均={_fmt_value(metric, pre)} → 開始後平均={_fmt_value(metric, post)}"
+                f"（{delta:+.1f}{unit}）"
+            )
+
+        flag = "【フラグ】" if m["flagged"] else ""
         sd_dev = _fmt(m["sd_dev"])
-        lines.append(
-            f"- {metric}: 値={_fmt_value(metric, value)}"
-            f" 前日比={prev_diff}{unit} 7日平均比={vs_7d}{unit} SD逸脱度={sd_dev} {flag}"
+        today_lines.append(
+            f"- {metric}: 当日={_fmt_value(metric, value)} 開始後平均からのSD逸脱度={sd_dev} {flag}"
         )
+
+    if trend_lines:
+        lines.append("\n【施策開始後の変化】(開始前平均→開始後平均)")
+        lines += trend_lines
+    lines.append("\n【本日の状態】(開始後平均からの逸脱)")
+    lines += today_lines
+
     if context.get("form_answers"):
-        lines.append("本人の当日アンケート回答（コンディションチェック）:")
+        lines.append("\n本人の前日アンケート回答（コンディションチェック）:")
         for question, answer in context["form_answers"].items():
             lines.append(f"- {question}: {answer}")
+
     lines.append(
         f"\n{min_len}〜{max_len}字程度で、特徴的な値の指摘＋今日1日の過ごし方の具体的なアドバイスを書いてください。"
     )
     return "\n".join(lines)
+
+
+def _has_value(v) -> bool:
+    return v is not None and not (isinstance(v, float) and pd.isna(v))
 
 
 def _fmt_value(metric: str, v) -> str:

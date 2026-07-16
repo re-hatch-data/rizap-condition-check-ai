@@ -1,7 +1,14 @@
 import pandas as pd
 
 from src.config import DATE_COLUMN
-from src.metrics import FLAG_SUFFIX, MISSING_DAYS_COLUMN, compute_flags, row_context
+from src.metrics import (
+    FLAG_SUFFIX,
+    MISSING_DAYS_COLUMN,
+    POST_START_MEAN_SUFFIX,
+    PRE_START_MEAN_SUFFIX,
+    compute_flags,
+    row_context,
+)
 
 TARGET_METRICS = ["QOLスコア"]
 
@@ -85,3 +92,44 @@ def test_row_context_shape():
     assert "QOLスコア" in ctx["metrics"]
     assert ctx["metrics"]["QOLスコア"]["value"] == 69
     assert "missing_days" in ctx
+
+
+def test_no_training_start_date_treats_all_rows_as_post_start():
+    """training_start_date未指定時は、従来通り全履歴を基準にする（開始前平均は計算しない）。"""
+    dates = pd.date_range("2026-06-01", periods=6, freq="D")
+    values = [70, 71, 69, 70, 72, 69]
+    df = compute_flags(_make_df(values, dates), TARGET_METRICS, sd_threshold=2.0)
+
+    assert pd.isna(df.iloc[-1][f"QOLスコア{PRE_START_MEAN_SUFFIX}"])
+    assert pd.notna(df.iloc[-1][f"QOLスコア{POST_START_MEAN_SUFFIX}"])
+
+
+def test_pre_and_post_start_means_are_split_at_training_start_date():
+    dates = pd.date_range("2026-06-01", periods=12, freq="D")
+    # 開始前(6/1-6/5)は低め、開始後(6/6-)は高めの値
+    values = [40, 42, 41, 39, 40, 60, 61, 59, 60, 62, 58, 61]
+    df = compute_flags(
+        _make_df(values, dates), TARGET_METRICS, sd_threshold=2.0, training_start_date="2026-06-06"
+    )
+
+    pre_mean = df.iloc[-1][f"QOLスコア{PRE_START_MEAN_SUFFIX}"]
+    assert abs(pre_mean - 40.4) < 0.1
+
+    # 開始前の行には開始後平均・フラグが計算されない
+    pre_start_row = df[df[DATE_COLUMN] < "2026-06-06"].iloc[0]
+    assert pd.isna(pre_start_row[f"QOLスコア{POST_START_MEAN_SUFFIX}"])
+    assert pd.isna(pre_start_row[f"QOLスコア{FLAG_SUFFIX}"])
+
+
+def test_post_start_average_only_uses_post_start_history():
+    """開始後平均の計算に開始前のデータが混ざらないこと。"""
+    dates = pd.date_range("2026-06-01", periods=11, freq="D")
+    # 開始前(6/1-6/5)は極端に低い値。開始後(6/6-)の平均計算に混ざると値が歪む
+    values = [0, 0, 0, 0, 0, 60, 61, 59, 60, 62, 61]
+    df = compute_flags(
+        _make_df(values, dates), TARGET_METRICS, sd_threshold=2.0, training_start_date="2026-06-06"
+    )
+
+    last_post_mean = df.iloc[-1][f"QOLスコア{POST_START_MEAN_SUFFIX}"]
+    # 開始後の値(60前後)のみで平均されていれば60付近、開始前の0が混ざれば大きく下振れするはず
+    assert last_post_mean > 55

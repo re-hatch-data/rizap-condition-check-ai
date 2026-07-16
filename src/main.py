@@ -18,6 +18,7 @@ from src.config import (
     DAILY_SHEET,
     DATE_COLUMN,
     FORM_SHEET,
+    ROSTER_SHEET_NAME,
     TARGET_METRICS,
     UID_COLUMN,
     settings,
@@ -29,13 +30,14 @@ from src.sheets_client import (
     list_subject_spreadsheets,
     load_daily_dataframe,
     load_form_answers,
+    load_training_start_dates,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
 
-def process_subject(gc, genai_client, subject: dict) -> None:
+def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[str, str]) -> None:
     name = subject["folder_name"]
     spreadsheet_id = subject["spreadsheet_id"]
     logger.info("=== %s (%s) ===", name, spreadsheet_id)
@@ -45,7 +47,11 @@ def process_subject(gc, genai_client, subject: dict) -> None:
         logger.warning("  SOXAI_dailyが空、または想定した列がありません。スキップします。")
         return
 
-    df = compute_flags(df, TARGET_METRICS, settings.sd_threshold)
+    # 施策開始日はマスター名簿(soxai_id基準)から引く。名簿に無い被験者はNoneのまま
+    # compute_flagsに渡り、従来通り全履歴基準にフォールバックする
+    subject_uid = str(df[UID_COLUMN].iloc[0]) if UID_COLUMN in df.columns and not df.empty else ""
+    training_start_date = training_start_dates.get(subject_uid)
+    df = compute_flags(df, TARGET_METRICS, settings.sd_threshold, training_start_date)
 
     sh = gc.open_by_key(spreadsheet_id)
     store = CommentStore(sh)
@@ -58,8 +64,11 @@ def process_subject(gc, genai_client, subject: dict) -> None:
     for _, row in df.iterrows():
         date_str = row[DATE_COLUMN].strftime("%Y-%m-%d")
         uid = str(row.get(UID_COLUMN, ""))
-        answers = form_answers.get(date_str, {})
-        # アンケート回答もハッシュに含める（ジョブ実行後に回答が提出された日は翌朝再生成される）
+        # アンケートは常に前日分を参照する（実行時刻の関係で当日分は全員提出済みとは
+        # 限らないため、日によって当日/前日が混在しないよう統一する。前日分は実行時点で
+        # 確定しているため、後から提出されて再生成が必要になることもない）
+        prev_date_str = (row[DATE_COLUMN] - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
+        answers = form_answers.get(prev_date_str, {})
         row_hash = compute_row_hash(row, TARGET_METRICS, extra=str(sorted(answers.items())))
 
         cached = store.get(date_str, uid)
@@ -103,10 +112,13 @@ def main() -> int:
     subjects = list_subject_spreadsheets(drive_svc, settings.cond_folder_id)
     logger.info("対象被験者数: %d", len(subjects))
 
+    training_start_dates = load_training_start_dates(gc, settings.roster_sheet_id, ROSTER_SHEET_NAME)
+    logger.info("マスター名簿から施策開始日を取得: %d名分", len(training_start_dates))
+
     failures = []
     for subject in subjects:
         try:
-            process_subject(gc, genai_client, subject)
+            process_subject(gc, genai_client, subject, training_start_dates)
         except Exception:
             logger.exception("処理に失敗しました: %s", subject.get("folder_name"))
             failures.append(subject.get("folder_name"))
