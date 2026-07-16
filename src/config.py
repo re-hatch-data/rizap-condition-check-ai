@@ -115,6 +115,11 @@ class Settings:
     sd_threshold: float = field(default_factory=_env_float("SD_THRESHOLD", 2.0))
     history_days: int = field(default_factory=_env_int("HISTORY_DAYS", 30))
 
+    # --- LINE WORKS連携（疎通確認用。本実装は要件確定後） ---
+    # Bot認証情報JSONのパス（形式は src/works_client.py 参照）。
+    # scripts/works_setup.py がトークルーム作成・テスト送信に使う。
+    works_bot_config: str = field(default_factory=_env("WORKS_BOT_CONFIG", "credentials/works-bot.json"))
+
     dry_run: bool = field(default_factory=_env_bool("DRY_RUN", False))
 
 
