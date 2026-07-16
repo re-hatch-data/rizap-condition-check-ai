@@ -110,9 +110,8 @@ def list_subject_spreadsheets(drive_svc, cond_folder_id: str) -> list[dict]:
     return subjects
 
 
-def load_daily_dataframe(gc: gspread.Client, spreadsheet_id: str, sheet_name: str) -> pd.DataFrame:
+def load_daily_dataframe(sh: gspread.Spreadsheet, sheet_name: str) -> pd.DataFrame:
     """SOXAI_daily シートを DataFrame として読み込む。シートが無ければ空を返す。"""
-    sh = gc.open_by_key(spreadsheet_id)
     try:
         ws = sh.worksheet(sheet_name)
     except gspread.WorksheetNotFound:
@@ -177,6 +176,16 @@ def load_training_start_dates(gc: gspread.Client, roster_sheet_id: str, sheet_na
             "マスター名簿(%s / %s)が見つかりません。全被験者が全履歴基準にフォールバックします。",
             roster_sheet_id,
             sheet_name,
+        )
+        return {}
+    except (PermissionError, gspread.exceptions.APIError):
+        # gspread 6.x は403をPermissionErrorに変換する。名簿は本ジョブで唯一の
+        # 追加参照ファイルのため、共有漏れ・一時的なAPIエラーでジョブ全体を
+        # 落とさず、docstring通りフォールバックさせる
+        logger.warning(
+            "マスター名簿(%s)にアクセスできません（SAへの共有設定を確認してください）。"
+            "全被験者が全履歴基準にフォールバックします。",
+            roster_sheet_id,
         )
         return {}
     return parse_training_start_dates(ws.get_all_records())

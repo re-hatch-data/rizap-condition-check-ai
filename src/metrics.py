@@ -7,15 +7,23 @@
      「全履歴平均」ではなく「施策開始後の平均」に変更した）
 """
 
+import logging
+
 import pandas as pd
 
 from src.config import DATE_COLUMN, SLEEP_METRICS, TIME_METRICS, TOTAL_SLEEP_COLUMN
 
+logger = logging.getLogger(__name__)
+
 PRE_START_MEAN_SUFFIX = "_開始前平均"
 POST_START_MEAN_SUFFIX = "_開始後平均"
 SD_DEV_SUFFIX = "_SD逸脱度"
+SD_BASIS_SUFFIX = "_SD基準"
 FLAG_SUFFIX = "_フラグ"
 MISSING_DAYS_COLUMN = "欠測日数"
+
+# SD逸脱度の判定を始めるのに必要な最低日数（expandingのmin_periodsと開始前フォールバックで共用）
+MIN_BASELINE_DAYS = 5
 
 
 def compute_flags(
@@ -49,7 +57,15 @@ def compute_flags(
             if metric in df.columns:
                 df.loc[no_sleep, metric] = pd.NA
 
-    start_ts = pd.Timestamp(training_start_date) if training_start_date else None
+    # 名簿は手入力のため、解釈できない日付はエラーにせず全履歴基準へフォールバックする
+    start_ts = pd.to_datetime(training_start_date, errors="coerce") if training_start_date else None
+    if start_ts is not None and pd.isna(start_ts):
+        logger.warning(
+            "トレーニング開始日を日付として解釈できません: %r（YYYY-MM-DD形式を想定）。"
+            "全履歴基準にフォールバックします。",
+            training_start_date,
+        )
+        start_ts = None
     is_post_start = df[DATE_COLUMN] >= start_ts if start_ts is not None else pd.Series(True, index=df.index)
 
     for metric in target_metrics:
@@ -64,12 +80,23 @@ def compute_flags(
         post_idx = df.index[is_post_start]
         post_series = series.loc[post_idx].reset_index(drop=True)
         # 「開始後平均」は当日を含まない、開始日以降のそれまでの平均（最低5日分たまってから判定開始）
-        post_mean = post_series.shift(1).expanding(min_periods=5).mean()
-        post_std = post_series.shift(1).expanding(min_periods=5).std()
-        sd_dev = (post_series - post_mean) / post_std.replace(0, pd.NA)
+        post_mean = post_series.shift(1).expanding(min_periods=MIN_BASELINE_DAYS).mean()
+        post_std = post_series.shift(1).expanding(min_periods=MIN_BASELINE_DAYS).std()
+
+        # 開始後データが5日分たまるまでの間は、開始前データが十分あれば開始前平均・SDを
+        # 暫定基準にする（施策開始直後＝最も見たい時期に異常検知の空白を作らないため）。
+        # どちらを基準にしたかはSD基準列に残し、プロンプト側で表記を切り替える
+        basis = pd.Series("開始後平均", index=post_series.index)
+        baseline_mean, baseline_std = post_mean, post_std
+        if pre_start_values.count() >= MIN_BASELINE_DAYS:
+            basis[post_mean.isna()] = "開始前平均"
+            baseline_mean = post_mean.fillna(pre_start_values.mean())
+            baseline_std = post_std.fillna(pre_start_values.std())
+        sd_dev = (post_series - baseline_mean) / baseline_std.replace(0, pd.NA)
 
         df.loc[post_idx, f"{metric}{POST_START_MEAN_SUFFIX}"] = post_mean.values
         df.loc[post_idx, f"{metric}{SD_DEV_SUFFIX}"] = sd_dev.values
+        df.loc[post_idx, f"{metric}{SD_BASIS_SUFFIX}"] = basis.values
         df.loc[post_idx, f"{metric}{FLAG_SUFFIX}"] = (sd_dev.abs() >= sd_threshold).values
 
     df[MISSING_DAYS_COLUMN] = _missing_day_counts(df[DATE_COLUMN])
@@ -106,6 +133,7 @@ def row_context(row: pd.Series, target_metrics: list[str]) -> dict:
             "pre_start_mean": row.get(f"{metric}{PRE_START_MEAN_SUFFIX}"),
             "post_start_mean": row.get(f"{metric}{POST_START_MEAN_SUFFIX}"),
             "sd_dev": row.get(f"{metric}{SD_DEV_SUFFIX}"),
+            "sd_basis": row.get(f"{metric}{SD_BASIS_SUFFIX}"),
             "flagged": bool(flag_value) if pd.notna(flag_value) else False,
         }
     return {

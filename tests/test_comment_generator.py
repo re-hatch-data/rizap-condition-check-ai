@@ -1,3 +1,5 @@
+import pandas as pd
+
 from src.comment_generator import SYSTEM_PROMPT, build_prompt
 
 
@@ -10,12 +12,13 @@ def test_system_prompt_frames_reference_knowledge_as_tendency_not_fact():
     assert "2時間" not in SYSTEM_PROMPT
 
 
-def _metric(value, pre_start_mean=None, post_start_mean=None, sd_dev=None, flagged=False):
+def _metric(value, pre_start_mean=None, post_start_mean=None, sd_dev=None, flagged=False, sd_basis=None):
     return {
         "value": value,
         "pre_start_mean": pre_start_mean,
         "post_start_mean": post_start_mean,
         "sd_dev": sd_dev,
+        "sd_basis": sd_basis,
         "flagged": flagged,
     }
 
@@ -107,6 +110,49 @@ def test_build_prompt_formats_time_and_sleep_metrics():
     assert "就寝時刻: 当日=0:31" in prompt
     assert "総睡眠min: 当日=370分(6.2時間)" in prompt
     assert "睡眠効率: 当日=94%" in prompt
+
+
+def test_build_prompt_handles_pd_na_pre_start_mean():
+    """名簿に開始日が無い被験者はmetrics側が開始前平均にpd.NAを入れる。
+    float(pd.NA)でクラッシュせず、トレンド欄をスキップできること。"""
+    context = {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"総睡眠min": _metric(370.0, pre_start_mean=pd.NA, post_start_mean=390.0, sd_dev=-0.8)},
+    }
+
+    prompt = build_prompt(context, min_len=40, max_len=60)
+
+    assert "施策開始後の変化" not in prompt
+    assert "総睡眠min: 当日=370分" in prompt
+
+
+def test_build_prompt_sleep_efficiency_delta_in_points():
+    """睡眠効率(0-1格納)の変化量が生値スケールで「+0.0」に丸まらず、ポイント表記になること。"""
+    context = {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"睡眠効率": _metric(0.95, pre_start_mean=0.90, post_start_mean=0.94, sd_dev=0.4)},
+    }
+
+    prompt = build_prompt(context, min_len=40, max_len=60)
+
+    assert "開始前平均=90% → 開始後平均=94%" in prompt
+    assert "+4.0pt" in prompt
+    assert "+0.0" not in prompt
+
+
+def test_build_prompt_shows_sd_basis_label():
+    """施策開始直後の暫定基準（開始前平均）が、逸脱度のラベルに反映されること。"""
+    context = {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"QOLスコア": _metric(48, sd_dev=-2.5, flagged=True, sd_basis="開始前平均")},
+    }
+
+    prompt = build_prompt(context, min_len=40, max_len=60)
+
+    assert "開始前平均からのSD逸脱度=-2.5" in prompt
 
 
 def test_build_prompt_skips_missing_values():

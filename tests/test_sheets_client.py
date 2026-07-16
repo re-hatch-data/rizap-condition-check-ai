@@ -1,4 +1,4 @@
-from src.sheets_client import parse_training_start_dates
+from src.sheets_client import load_training_start_dates, parse_training_start_dates
 
 
 def test_parse_training_start_dates_maps_uid_to_date():
@@ -34,3 +34,17 @@ def test_parse_training_start_dates_strips_whitespace():
     result = parse_training_start_dates(records)
 
     assert result == {"rizap_003": "2026-06-09"}
+
+
+class _PermissionDeniedGC:
+    """名簿がSAに共有されていない場合、gspread 6.xはopen_by_keyでPermissionErrorを送出する。"""
+
+    def open_by_key(self, key):
+        raise PermissionError
+
+
+def test_load_training_start_dates_falls_back_on_permission_error():
+    """名簿にアクセスできなくてもジョブ全体を落とさず、空dict（全履歴基準）に倒れること。"""
+    result = load_training_start_dates(_PermissionDeniedGC(), "roster-id", "被験者名簿")
+
+    assert result == {}

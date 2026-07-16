@@ -35,7 +35,8 @@ SYSTEM_PROMPT = (
     "与えられるのは、睡眠（総睡眠時間・深い/浅い/REM睡眠・入眠潜時・睡眠効率・就寝/起床時刻）、"
     "ストレス、活動量（歩数・活動消費kcal）の実測値です。比較の軸は2つあります。"
     "(1) 施策開始前平均→施策開始後平均：施策全体を通じた長期的な変化。"
-    "(2) 当日の値の、施策開始後平均からのSD逸脱度：直近の異常検知。"
+    "(2) 当日の値の、個人平均（原則は施策開始後平均。開始直後でデータが少ない間は開始前平均）"
+    "からのSD逸脱度：直近の異常検知。"
     "加えて、欠測日数と、本人の前日アンケート回答（体調の自己評価・業務負荷の想定・食事の予定など）"
     "が与えられます。"
     "「特徴的な値の指摘」と「今日1日をより良く過ごすための具体的なアドバイス」を、"
@@ -64,29 +65,29 @@ def build_prompt(context: dict, min_len: int, max_len: int) -> str:
     today_lines = []
     for metric, m in context["metrics"].items():
         value = m["value"]
-        if value is None or (isinstance(value, float) and pd.isna(value)):
+        if pd.isna(value):
             continue
         unit = "h" if metric in TIME_METRICS else ""
 
         pre = m["pre_start_mean"]
         post = m["post_start_mean"]
-        if _has_value(pre) and _has_value(post):
-            delta = post - pre
+        if pd.notna(pre) and pd.notna(post):
             trend_lines.append(
                 f"- {metric}: 開始前平均={_fmt_value(metric, pre)} → 開始後平均={_fmt_value(metric, post)}"
-                f"（{delta:+.1f}{unit}）"
+                f"（{_fmt_delta(metric, pre, post, unit)}）"
             )
 
         flag = "【フラグ】" if m["flagged"] else ""
         sd_dev = _fmt(m["sd_dev"])
+        basis = m.get("sd_basis") if isinstance(m.get("sd_basis"), str) else "開始後平均"
         today_lines.append(
-            f"- {metric}: 当日={_fmt_value(metric, value)} 開始後平均からのSD逸脱度={sd_dev} {flag}"
+            f"- {metric}: 当日={_fmt_value(metric, value)} {basis}からのSD逸脱度={sd_dev} {flag}"
         )
 
     if trend_lines:
         lines.append("\n【施策開始後の変化】(開始前平均→開始後平均)")
         lines += trend_lines
-    lines.append("\n【本日の状態】(開始後平均からの逸脱)")
+    lines.append("\n【本日の状態】(個人平均からの逸脱)")
     lines += today_lines
 
     if context.get("form_answers"):
@@ -100,8 +101,13 @@ def build_prompt(context: dict, min_len: int, max_len: int) -> str:
     return "\n".join(lines)
 
 
-def _has_value(v) -> bool:
-    return v is not None and not (isinstance(v, float) and pd.isna(v))
+def _fmt_delta(metric: str, pre, post, unit: str) -> str:
+    """開始前→開始後の変化量。睡眠効率は平均表示(%)に合わせてポイント表記にする
+    （生値0-1のまま+.1f整形すると+4ptの変化も「+0.0」になってしまうため）。"""
+    delta = post - pre
+    if metric == "睡眠効率" and pre <= 1 and post <= 1:
+        return f"{delta * 100:+.1f}pt"
+    return f"{delta:+.1f}{unit}"
 
 
 def _fmt_value(metric: str, v) -> str:
@@ -117,7 +123,7 @@ def _fmt_value(metric: str, v) -> str:
 
 
 def _fmt(v) -> str:
-    if v is None or (isinstance(v, float) and pd.isna(v)):
+    if pd.isna(v):
         return "N/A"
     return f"{v:+.1f}" if isinstance(v, (int, float)) else str(v)
 

@@ -6,6 +6,8 @@ from src.metrics import (
     MISSING_DAYS_COLUMN,
     POST_START_MEAN_SUFFIX,
     PRE_START_MEAN_SUFFIX,
+    SD_BASIS_SUFFIX,
+    SD_DEV_SUFFIX,
     compute_flags,
     row_context,
 )
@@ -119,6 +121,46 @@ def test_pre_and_post_start_means_are_split_at_training_start_date():
     pre_start_row = df[df[DATE_COLUMN] < "2026-06-06"].iloc[0]
     assert pd.isna(pre_start_row[f"QOLスコア{POST_START_MEAN_SUFFIX}"])
     assert pd.isna(pre_start_row[f"QOLスコア{FLAG_SUFFIX}"])
+
+
+def test_unparseable_training_start_date_falls_back_to_all_history():
+    """名簿の開始日が解釈できない値でも、エラーにせず全履歴基準にフォールバックすること。"""
+    dates = pd.date_range("2026-06-01", periods=6, freq="D")
+    values = [70, 71, 69, 70, 72, 69]
+
+    df = compute_flags(_make_df(values, dates), TARGET_METRICS, sd_threshold=2.0, training_start_date="未定")
+
+    assert pd.isna(df.iloc[-1][f"QOLスコア{PRE_START_MEAN_SUFFIX}"])
+    assert pd.notna(df.iloc[-1][f"QOLスコア{POST_START_MEAN_SUFFIX}"])
+
+
+def test_sd_detection_uses_pre_start_baseline_during_warmup():
+    """施策開始直後（開始後データ5日未満）でも、開始前データが十分あれば
+    開始前平均を暫定基準にして異常検知が働くこと。"""
+    dates = pd.date_range("2026-06-01", periods=8, freq="D")
+    # 開始前(6/1-6/7)は安定して70前後、開始翌日(6/8)に大きく落ち込む
+    values = [70, 71, 69, 70, 72, 69, 70, 20]
+    df = compute_flags(
+        _make_df(values, dates), TARGET_METRICS, sd_threshold=2.0, training_start_date="2026-06-08"
+    )
+
+    last = df.iloc[-1]
+    assert pd.notna(last[f"QOLスコア{SD_DEV_SUFFIX}"])
+    assert last[f"QOLスコア{SD_BASIS_SUFFIX}"] == "開始前平均"
+    assert bool(last[f"QOLスコア{FLAG_SUFFIX}"]) is True
+
+
+def test_sd_basis_switches_to_post_start_mean_after_warmup():
+    dates = pd.date_range("2026-06-01", periods=12, freq="D")
+    values = [70, 71, 69, 70, 72, 60, 61, 59, 60, 62, 58, 61]
+    df = compute_flags(
+        _make_df(values, dates), TARGET_METRICS, sd_threshold=2.0, training_start_date="2026-06-06"
+    )
+
+    # 開始後6日目以降は開始後平均が基準になる
+    assert df.iloc[-1][f"QOLスコア{SD_BASIS_SUFFIX}"] == "開始後平均"
+    ctx = row_context(df.iloc[-1], TARGET_METRICS)
+    assert ctx["metrics"]["QOLスコア"]["sd_basis"] == "開始後平均"
 
 
 def test_post_start_average_only_uses_post_start_history():
