@@ -5,3 +5,6 @@ google-api-python-client>=2.149
 google-genai>=1.0
 pandas>=2.2
 python-dotenv>=1.0
+# LINE WORKS Bot連携（Service Account認証のJWT署名と疎通確認）
+PyJWT[crypto]>=2.8
+requests>=2.31
