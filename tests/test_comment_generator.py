@@ -65,6 +65,25 @@ def test_build_prompt_omits_trend_section_when_pre_start_missing():
     assert "本日の状態" in prompt
 
 
+def test_system_prompt_frames_answers_as_previous_day():
+    """前日回答の設問文に含まれる「本日」を当日の予定と誤解させないための指示があること。"""
+    assert "「今朝」「本日」はすべて前日を指す" in SYSTEM_PROMPT
+    assert "当日の予定として扱ってはいけません" in SYSTEM_PROMPT
+
+
+def test_build_prompt_labels_answers_as_previous_day():
+    context = {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"QOLスコア": _metric(48, post_start_mean=44.0, sd_dev=-1.1)},
+        "form_answers": {"Q2. 本日の業務負荷の想定": "高い"},
+    }
+
+    prompt = build_prompt(context, min_len=40, max_len=60)
+
+    assert "設問の「今朝」「本日」は前日を指す" in prompt
+
+
 def test_build_prompt_includes_form_answers():
     context = {
         "date": "2026-07-09",
