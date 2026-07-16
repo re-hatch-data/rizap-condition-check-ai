@@ -12,14 +12,15 @@
 ```bash
 git clone https://github.com/re-hatch-data/rizap-condition-check-ai.git
 cd rizap-condition-check-ai
-./deploy/bootstrap.sh rizap-marketing 09:30   # 第2引数 = 毎朝の実行時刻(JST)。MTGで決めた時刻を入れる
+./deploy/bootstrap.sh rizap-marketing
 ```
 
 これで API有効化 → IAM付与 → SAキーのSecret登録 → Cloud Run Jobs + Schedulerデプロイ →
 即時1回実行（シート反映の確認）まで通しで完了する。
 
-- **実行時刻は第2引数(HH:MM)で指定**（省略時 08:30）。後から変える場合は
-  時刻を変えて同じコマンドを再実行するだけでよい
+- **実行スケジュールはJST7:00〜8:55の5分おき固定**。SOXAI Ring同期の完了（データ到着）を
+  自動検知して処理するため、「毎朝何時に動かすか」を決める必要はない
+  （詳細は [architecture.md](architecture.md)）
 - 対象フォルダIDは既定値としてコード側に設定済み（変える場合は `COND_FOLDER_ID` 環境変数）
 - SAの名前が `soxai-runner@<PROJECT_ID>.iam.gserviceaccount.com` と異なる場合は
   `SA_EMAIL=<正式なSAメール> ./deploy/bootstrap.sh <PROJECT_ID>` で指定
@@ -87,10 +88,9 @@ cd rizap-condition-check-ai
    対象スプレッドシートを開き、`AIコメント_ログ` シートが作成され、
    日付ごとのコメントが入っているかを確認する（SOXAI_daily自体には書き込まない）。
 
-6. 本番運用開始：Cloud Schedulerが毎朝、指定時刻（JST）に自動実行する。
-   運用開始後しばらくは、当日分のコメントが毎朝追記されているかを数日分は目視確認することを推奨。
-   実行時刻を変える場合は `./deploy/bootstrap.sh <PROJECT_ID> <HH:MM>` を再実行する
-   （SOXAI Ring同期(JST7:00頃)より後、かつアンケート提出が揃う時刻を推奨）。
+6. 本番運用開始：Cloud SchedulerがJST7:00〜8:55の間5分おきに実行し、SOXAI Ring同期の
+   完了を自動検知して処理する。運用開始後しばらくは、当日分のコメントが毎朝追記されて
+   いるかを数日分は目視確認することを推奨。
 
 ## トラブルシュート
 
@@ -103,5 +103,5 @@ cd rizap-condition-check-ai
   （rizap-soxai-ring の同期が正常に動いていれば権限はあるはず）、SAキーが失効していないかを確認。
   キーを再発行する場合: `gcloud iam service-accounts keys create ...` →
   `gcloud secrets versions add soxai-sa-key --data-file=...`
-- **アンケートがコメントに反映されない** → 提出時刻がジョブ実行(8:30)より後の可能性。
-  翌朝の実行で自動的に再生成・反映される
+- **アンケートがコメントに反映されない** → コメント生成には常に前日分のアンケート回答を
+  使う仕様（実行時刻の関係で当日分は全員提出済みとは限らないため）。当日分は翌朝のコメントに反映される

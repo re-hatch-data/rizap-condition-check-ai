@@ -56,6 +56,10 @@ class CommentStore:
     def get(self, date_str: str, uid: str) -> dict | None:
         return self._entries.get((date_str, uid))
 
+    def has_date(self, date_str: str) -> bool:
+        """指定日のコメントが（どのユーザーIDでも）保存済みかどうか。"""
+        return any(date == date_str for date, _uid in self._entries)
+
     def upsert(self, date_str: str, uid: str, comment: str, row_hash: str) -> None:
         self._entries[(date_str, uid)] = {
             "comment": comment,

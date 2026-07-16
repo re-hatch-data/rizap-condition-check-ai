@@ -72,10 +72,21 @@ COMMENT_LOG_SHEET = "AIコメント_ログ"
 DATE_COLUMN = "日付"
 UID_COLUMN = "ユーザーID"
 
-# 当日アンケート（Googleフォーム）の回答シート。Q1体調・Q2業務負荷・Q3食事の予定・
+# アンケート（Googleフォーム）の回答シート。Q1体調・Q2業務負荷・Q3食事の予定・
 # Q5困りごと等をプロンプトに含める（Q4 SOXAI RINGの同期状況は運用情報なので除外）。
+# コメント生成には常に前日分の回答を使う（実行時刻(7時台)には当日分が全員提出済みとは
+# 限らないため、提出タイミングに依らず日によって当日/前日が混在しないよう統一する）。
 FORM_SHEET = "フォームの回答 1"
 FORM_TIMESTAMP_COLUMN = "タイムスタンプ"
+
+# 施策（トレーニング）開始日は、被験者ごとに個別シートへ入力してもらう案ではなく、
+# 全被験者共通のマスター名簿から取得する方式に決定（2026-07-14）。
+# ROSTER_UID_COLUMN(soxai_id) が各被験者のSOXAI_dailyのUID_COLUMN(ユーザーID)と
+# 完全一致するため、この名簿を1回読み込むだけで全被験者分の開始日を引ける
+# （各被験者スプレッドシートへの転記は不要）。
+ROSTER_SHEET_NAME = "被験者名簿"
+ROSTER_UID_COLUMN = "soxai_id"
+ROSTER_TRAINING_START_DATE_COLUMN = "トレーニング開始日"
 
 
 @dataclass
@@ -88,6 +99,10 @@ class Settings:
     # 既定値は「コンディションチェック」親フォルダ（確定済み）。別環境で試す場合のみ上書きする。
     cond_folder_id: str = field(
         default_factory=_env("COND_FOLDER_ID", "1O7oYAdZ6opu_P9tZ-_0idO__E_WXKcGG")
+    )
+    # 「00_被験者名簿」マスタースプレッドシート（施策開始日の取得元。確定済み）。
+    roster_sheet_id: str = field(
+        default_factory=_env("ROSTER_SHEET_ID", "1guzsxOVhRVIAMQpWXnbESOO6h6BqOk9tu4huHLd-_4U")
     )
 
     # --- Gemini (Vertex AI経由) ---
