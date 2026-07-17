@@ -21,8 +21,8 @@ IAM管理者による手動付与をお願いする可能性があります。
 | プロジェクト | API有効化: `run` / `cloudbuild` / `artifactregistry` / `cloudscheduler` / `secretmanager` / `aiplatform` | Cloud Run Jobs・ビルド・定期実行・SAキー保管・Gemini呼び出し |
 | soxai-runner SA | `roles/aiplatform.user`（プロジェクト） | Agent Platform（旧Vertex AI）経由のGemini呼び出し |
 | soxai-runner SA | `roles/run.invoker`（condition-check-ai ジョブ） | Cloud Schedulerからのジョブ起動 |
-| soxai-runner SA | `roles/secretmanager.secretAccessor`（secret: soxai-sa-key） | 実行時にSAキーを読み込むため |
-| Secret Manager | secret `soxai-sa-key` にSAキーJSONを登録 | Drive/Sheetsアクセス用の認証情報 |
+| soxai-runner SA | `roles/secretmanager.secretAccessor`（secret: condition-check-ai-sa-key） | 実行時にSAキーを読み込むため |
+| Secret Manager | secret `condition-check-ai-sa-key` にSAキーJSONを登録 | Drive/Sheetsアクセス用の認証情報 |
 
 ## 追加対応が不要なもの
 

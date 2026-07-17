@@ -61,7 +61,7 @@ cd rizap-condition-check-ai
    ```bash
    gcloud iam service-accounts keys create /tmp/sa-key.json \
      --iam-account soxai-runner@<PROJECT_ID>.iam.gserviceaccount.com
-   gcloud secrets versions add soxai-sa-key --data-file=/tmp/sa-key.json
+   gcloud secrets versions add condition-check-ai-sa-key --data-file=/tmp/sa-key.json
    rm /tmp/sa-key.json
    ```
 
@@ -103,6 +103,6 @@ cd rizap-condition-check-ai
 - **Drive/Sheetsアクセスが403/404** → soxai-runner に対象フォルダのアクセス権があるか
   （rizap-soxai-ring の同期が正常に動いていれば権限はあるはず）、SAキーが失効していないかを確認。
   キーを再発行する場合: `gcloud iam service-accounts keys create ...` →
-  `gcloud secrets versions add soxai-sa-key --data-file=...`
+  `gcloud secrets versions add condition-check-ai-sa-key --data-file=...`
 - **アンケートがコメントに反映されない** → コメント生成には常に前日分のアンケート回答を
   使う仕様（実行時刻の関係で当日分は全員提出済みとは限らないため）。当日分は翌朝のコメントに反映される
