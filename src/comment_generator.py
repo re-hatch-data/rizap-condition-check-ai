@@ -138,10 +138,26 @@ def generate_comment(client: genai.Client, model: str, context: dict, min_len: i
     response = client.models.generate_content(
         model=model,
         contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, max_output_tokens=300),
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            max_output_tokens=500,
+            # gemini-2.5-flashは既定で内部思考(thinking)を行い、その思考トークンも
+            # max_output_tokensの予算に含まれる。このタスクは短いコメント生成のみで
+            # 深い推論は不要なため無効化する(有効のままだと本文生成前に予算切れで
+            # 途中で打ち切られることがある)
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        ),
     )
     text = (response.text or "").strip()
     if len(text) > max_len + 10:
-        logger.warning("コメントが想定より長いため切り詰めます（%d字）: %s", len(text), text)
-        text = text[:max_len]
+        # 単純な文字数カットだと単語・文の途中で不自然に切れるため、
+        # 区切り文字(。！？)まで遡ってその直後で切る。近くに区切りが無ければ
+        # そのまま残す(多少長くても不自然な尻切れよりまし)
+        limit = max_len + 30
+        cut = max(text.rfind(c, 0, limit) for c in "。！？")
+        if cut != -1:
+            logger.warning("コメントが想定より長いため文末で切り詰めます（%d→%d字）", len(text), cut + 1)
+            text = text[: cut + 1]
+        else:
+            logger.warning("コメントが想定より長いですが、区切りが見つからないためそのまま使います（%d字）", len(text))
     return text
