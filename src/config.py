@@ -107,9 +107,17 @@ class Settings:
 
     # --- Gemini (Vertex AI経由) ---
     gemini_model: str = field(default_factory=_env("GEMINI_MODEL", "gemini-2.5-flash"))
-    # 「特徴的な値の指摘＋今日1日の過ごし方アドバイス」を1〜2文で収める目安
-    comment_min_len: int = field(default_factory=_env_int("COMMENT_MIN_LEN", 60))
-    comment_max_len: int = field(default_factory=_env_int("COMMENT_MAX_LEN", 120))
+    # OKR+SBI+KPTフォーマットのSBI/KPT各項目(1文)の字数目安
+    comment_min_len: int = field(default_factory=_env_int("COMMENT_MIN_LEN", 20))
+    comment_max_len: int = field(default_factory=_env_int("COMMENT_MAX_LEN", 60))
+    # OKRの「O」。被験者ごとの数値目標を保持する仕組みが無いため、施策全体としての
+    # 目標を固定文で表示する(名簿等に被験者別の目標値が導入され次第、その値で置き換える)
+    objective_text: str = field(
+        default_factory=_env(
+            "OBJECTIVE_TEXT",
+            "施策期間を通じて、睡眠・活動量・ストレスの状態を良好に保ち、無理なく生活習慣を改善すること",
+        )
+    )
 
     # --- フラグ検知 ---
     sd_threshold: float = field(default_factory=_env_float("SD_THRESHOLD", 2.0))

@@ -1,10 +1,22 @@
-"""Agent Platform（旧Vertex AI）経由でGeminiを呼び出し、日次コメントを生成する。
+"""Agent Platform（旧Vertex AI）経由でGeminiを呼び出し、日次フィードバックを生成する。
 
-コメント内容は「特徴的な値の指摘＋今日の過ごし方アドバイス」。
+出力はOKR＋SBI＋KPTのハイブリッド形式:
+- O (Objective): 施策全体の目標。被験者ごとの数値目標を保持する仕組みが無いため、
+  settings.objective_text の固定文をそのまま使う（Geminiには生成させない。契約上
+  一定の文言であるべきものをLLMに都度言い換えさせると表記が揺れるため）。
+- KR (Key Results): 当日フラグが立った指標（metrics.compute_flagsのSD逸脱判定）のみを
+  対象にする。全11指標を毎日展開すると長大になり、トレーナーが読む分量として実用的でない。
+- KR毎に、トレーナー向けの客観的分析(SBI)と、ゲストへそのまま伝える口語メッセージ(KPT)を
+  分離して生成する。SBIは「事象の分析」、KPTは「伝達するメッセージ」という役割分担とし、
+  内容が重複しないようSYSTEM_PROMPTで明示する。
+フラグが立った指標が無い日はGeminiを呼ばず、固定の激励文を返す（コスト削減、かつ
+「特筆すべき逸脱なし」は判定ロジック側で確定済みのため生成の余地が無い）。
+
 Geminiは純正のGoogleモデルのため、API（aiplatform.googleapis.com）を有効化するだけで
 利用できる（Model Garden経由のパートナーモデルのような追加の利用規約同意が不要）。
 """
 
+import json
 import logging
 
 import pandas as pd
@@ -14,6 +26,37 @@ from google.genai import types
 from src.config import TIME_METRICS, TOTAL_SLEEP_COLUMN, Settings
 
 logger = logging.getLogger(__name__)
+
+# フラグが立った指標が無い日に返す固定文（Gemini呼び出し無し）
+NO_FLAG_COMMENT = "本日は特に大きな逸脱は見られません。引き続き今の生活リズムを維持しましょう。"
+
+# response_mime_type="application/json"だけだとGeminiが構造を厳密に守らず、
+# (実測: kptをsbiオブジェクトの内側にネストして返す等) 稀に階層を誤ることがあったため、
+# response_schemaで構造を強制する。
+# 注意: response_schemaに素のdict(JSON Schema風)を渡す方式は、この検証時点では
+# Vertex AI側に構造を守らせられず同じ問題が再現した。types.Schemaオブジェクトを
+# 明示的に構築する方式でのみ確実に効いたため、こちらを使う
+_STR = types.Schema(type=types.Type.STRING)
+_SBI_SCHEMA = types.Schema(
+    type=types.Type.OBJECT,
+    properties={"situation": _STR, "behavior": _STR, "impact": _STR},
+    required=["situation", "behavior", "impact"],
+)
+_KPT_SCHEMA = types.Schema(
+    type=types.Type.OBJECT,
+    properties={"keep": _STR, "problem": _STR, "try": _STR},
+    required=["keep", "problem", "try"],
+)
+_KEY_RESULT_SCHEMA = types.Schema(
+    type=types.Type.OBJECT,
+    properties={"metric": _STR, "sbi": _SBI_SCHEMA, "kpt": _KPT_SCHEMA},
+    required=["metric", "sbi", "kpt"],
+)
+RESPONSE_SCHEMA = types.Schema(
+    type=types.Type.OBJECT,
+    properties={"key_results": types.Schema(type=types.Type.ARRAY, items=_KEY_RESULT_SCHEMA)},
+    required=["key_results"],
+)
 
 # 一般的に知られている傾向（査読付き研究・公的機関のガイドライン等、確度の高い情報源のみを採用。
 # 2026-07-15調査。詳細な出典・不採用とした項目の理由は docs/setup-checklist.md 参照）。
@@ -30,10 +73,12 @@ REFERENCE_TENDENCIES = (
 )
 
 SYSTEM_PROMPT = (
-    "あなたはフィットネス施設のトレーナー向けに、被験者の日次コンディションデータから"
-    "一言コメントを作成するアシスタントです。"
-    "与えられるのは、睡眠（総睡眠時間・深い/浅い/REM睡眠・入眠潜時・睡眠効率・就寝/起床時刻）、"
-    "ストレス、活動量（歩数・活動消費kcal）の実測値です。比較の軸は2つあります。"
+    "あなたはフィットネス施設のトレーナー向けに、ゲスト（被験者）の日次コンディションデータから"
+    "OKR＋SBI＋KPT形式のフィードバックレポートを作成するアシスタントです。"
+    "与えられるのは、施策全体の目標(O)、睡眠（総睡眠時間・深い/浅い/REM睡眠・入眠潜時・睡眠効率・"
+    "就寝/起床時刻）、ストレス、活動量（歩数・活動消費kcal）の実測値、"
+    "本日KR（Key Result）として扱う指標の一覧（当日SD逸脱度が閾値を超えてフラグが立った指標）です。"
+    "比較の軸は2つあります。"
     "(1) 施策開始前平均→施策開始後平均：施策全体を通じた長期的な変化。"
     "(2) 当日の値の、個人平均（原則は施策開始後平均。開始直後でデータが少ない間は開始前平均）"
     "からのSD逸脱度：直近の異常検知。"
@@ -44,13 +89,27 @@ SYSTEM_PROMPT = (
     "「夜に会食あり」はすでに終わった前日夜の会食）。"
     "前日の状況（業務負荷・会食・体調など）の影響や疲労が当日の数値に表れていないか、"
     "という視点で参考にしてください。"
-    "「特徴的な値の指摘」と「今日1日をより良く過ごすための具体的なアドバイス」を、"
-    "指定された文字数の範囲内の自然な日本語（1〜2文）で書いてください。"
-    "長期的な変化（施策の効果）と当日の異常値の両方が確認できる場合は、両方に触れてもかまいません。"
-    "睡眠時間が短い・就寝時刻がいつもより遅い・ストレスが高い等は、"
-    "トレーナーがそのまま本人への声かけに使える表現で指摘してください。"
+    "\n\n"
+    "本日KRとして与えられた指標それぞれについて、SBIとKPTの両方を作成してください。"
+    "SBIは「事象の分析」（トレーナーが現状の裏付け・論理を理解するための客観的な記述）、"
+    "KPTは「伝達するメッセージ」（トレーナーがそのままゲストへ声かけできる口語的な文章）と"
+    "役割が異なります。両者は同じ内容を言い換えただけにならないようにしてください。"
+    "具体的には、SBIのsituation/behaviorで述べた事実そのものをKPTのproblemで繰り返さない"
+    "（KPTのproblemはゲスト向けにやわらげた言い方に変換すること）。"
+    "SBIのimpact（データ・行動が目標(O)にどう影響するかの分析）と、"
+    "KPTのtry（次回に向けた具体的な行動提案）も、分析と提案という別の役割を保つこと。"
+    "- sbi.situation: 当日の数値・データから読み取れる客観的な事実\n"
+    "- sbi.behavior: その背景にあると推測される、ゲストが取った具体的な行動"
+    "（前日アンケート回答があれば優先的に参照する）\n"
+    "- sbi.impact: その行動とデータが、目標(O)や今後のコンディションにどう影響するかの分析\n"
+    "- kpt.keep: データから読み取れる、褒めるべき点・継続すべき点"
+    "（そのKR自体に良い点が無ければ、他の指標や継続的な取り組みでもよい）\n"
+    "- kpt.problem: 改善が必要な点。ゲストを責めないやわらかいトーンで\n"
+    "- kpt.try: 明日以降に向けた、具体的で実行しやすい行動提案\n"
+    "各項目は指定された文字数程度の自然な日本語1文で書いてください。"
     "アンケート回答がある日は、数値と自己申告のギャップ（本人は元気なつもりだが数値は低い等）にも着目してください。"
-    "数値の羅列や絵文字、前置き・見出しは不要です。コメント本文だけを出力してください。"
+    "数値の羅列や絵文字は不要です。"
+    "出力は指定されたJSON形式のみとし、前置き・説明文・Markdownのコードフェンスは一切含めないでください。"
     + REFERENCE_TENDENCIES
 )
 
@@ -59,8 +118,9 @@ def build_client(settings: Settings) -> genai.Client:
     return genai.Client(vertexai=True, project=settings.gcp_project, location=settings.gcp_location)
 
 
-def build_prompt(context: dict, min_len: int, max_len: int) -> str:
+def build_prompt(context: dict, objective_text: str, flagged_metrics: list[str], min_len: int, max_len: int) -> str:
     lines = [
+        f"目標(O): {objective_text}",
         f"日付: {context['date']}",
         f"欠測日数（直近の空白日数）: {context['missing_days']}日",
         "（min系は分、就寝/起床時刻はHH:MM表記・差分は時間、睡眠効率は%）",
@@ -82,7 +142,7 @@ def build_prompt(context: dict, min_len: int, max_len: int) -> str:
                 f"（{_fmt_delta(metric, pre, post, unit)}）"
             )
 
-        flag = "【フラグ】" if m["flagged"] else ""
+        flag = "【本日のKR対象】" if metric in flagged_metrics else ""
         sd_dev = _fmt(m["sd_dev"])
         basis = m.get("sd_basis") if isinstance(m.get("sd_basis"), str) else "開始後平均"
         today_lines.append(
@@ -90,7 +150,7 @@ def build_prompt(context: dict, min_len: int, max_len: int) -> str:
         )
 
     if trend_lines:
-        lines.append("\n【施策開始後の変化】(開始前平均→開始後平均)")
+        lines.append("\n【施策開始後の変化】(開始前平均→開始後平均。長期的な文脈として参考にする)")
         lines += trend_lines
     lines.append("\n【本日の状態】(個人平均からの逸脱)")
     lines += today_lines
@@ -100,8 +160,13 @@ def build_prompt(context: dict, min_len: int, max_len: int) -> str:
         for question, answer in context["form_answers"].items():
             lines.append(f"- {question}: {answer}")
 
+    lines.append(f"\n本日KRとして扱う指標: {', '.join(flagged_metrics)}")
     lines.append(
-        f"\n{min_len}〜{max_len}字程度で、特徴的な値の指摘＋今日1日の過ごし方の具体的なアドバイスを書いてください。"
+        f"\n上記の指標それぞれについて、SBI・KPT各項目を{min_len}〜{max_len}字程度の1文で作成し、"
+        "次のJSON形式のみを出力してください（前置き・コードフェンス不要）:\n"
+        '{"key_results": [{"metric": "<指標名。上記の指標名をそのまま使う>", '
+        '"sbi": {"situation": "...", "behavior": "...", "impact": "..."}, '
+        '"kpt": {"keep": "...", "problem": "...", "try": "..."}}]}'
     )
     return "\n".join(lines)
 
@@ -133,15 +198,68 @@ def _fmt(v) -> str:
     return f"{v:+.1f}" if isinstance(v, (int, float)) else str(v)
 
 
-def generate_comment(client: genai.Client, model: str, context: dict, min_len: int, max_len: int) -> str:
-    prompt = build_prompt(context, min_len, max_len)
+def format_feedback(objective_text: str, key_results: list[dict]) -> str:
+    """OKR＋SBI＋KPTの構造をログシートの「コメント」セル用テキストに整形する。"""
+    lines = [f"【O】{objective_text}"]
+    if not key_results:
+        lines.append(NO_FLAG_COMMENT)
+        return "\n".join(lines)
+
+    for kr in key_results:
+        metric = kr.get("metric") or "?"
+        sbi = kr.get("sbi") or {}
+        kpt = kr.get("kpt") or {}
+        lines.append(f"\n【KR: {metric}】")
+        lines.append("[トレーナー分析]")
+        lines.append(f"S: {sbi.get('situation', '')}")
+        lines.append(f"B: {sbi.get('behavior', '')}")
+        lines.append(f"I: {sbi.get('impact', '')}")
+        lines.append("[ゲストへの伝え方]")
+        lines.append(f"K: {kpt.get('keep', '')}")
+        lines.append(f"P: {kpt.get('problem', '')}")
+        lines.append(f"T: {kpt.get('try', '')}")
+    return "\n".join(lines)
+
+
+def generate_comment(
+    client: genai.Client,
+    model: str,
+    context: dict,
+    objective_text: str,
+    min_len: int,
+    max_len: int,
+) -> str:
+    flagged_metrics = [
+        metric for metric, m in context["metrics"].items() if m.get("flagged") and pd.notna(m.get("value"))
+    ]
+    if not flagged_metrics:
+        return format_feedback(objective_text, [])
+
+    prompt = build_prompt(context, objective_text, flagged_metrics, min_len, max_len)
     response = client.models.generate_content(
         model=model,
         contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=SYSTEM_PROMPT, max_output_tokens=300),
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            max_output_tokens=1200,
+            # gemini-2.5-flashは既定で内部思考(thinking)を行い、その思考トークンも
+            # max_output_tokensの予算に含まれる。このタスクは深い推論は不要なため無効化する
+            # (有効のままだと本文生成前に予算切れで途中で打ち切られることがある)
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+            response_mime_type="application/json",
+            response_schema=RESPONSE_SCHEMA,
+        ),
     )
-    text = (response.text or "").strip()
-    if len(text) > max_len + 10:
-        logger.warning("コメントが想定より長いため切り詰めます（%d字）: %s", len(text), text)
-        text = text[:max_len]
-    return text
+    raw = (response.text or "").strip()
+    try:
+        data = json.loads(raw)
+        key_results = data.get("key_results", [])
+        if not isinstance(key_results, list):
+            raise ValueError("key_resultsが配列ではありません")
+    except (json.JSONDecodeError, ValueError, AttributeError) as e:
+        # JSON生成に失敗した場合でもジョブ全体を落とさず、KR無しとして扱う
+        # （翌日以降、データハッシュ不一致により自動的に再生成が試みられる）
+        logger.warning("Gemini応答のJSON解析に失敗しました: %s / raw=%s", e, raw)
+        key_results = []
+
+    return format_feedback(objective_text, key_results)

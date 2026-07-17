@@ -41,6 +41,9 @@ from src.sheets_client import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
+# OKR+SBI+KPTフォーマット導入時点のバージョン。出力フォーマットを変える改修をしたら上げる
+COMMENT_FORMAT_VERSION = "okr_sbi_kpt_v1"
+
 
 def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[str, str]) -> None:
     name = subject["folder_name"]
@@ -85,8 +88,10 @@ def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[
         prev_date_str = (row[DATE_COLUMN] - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         answers = form_answers.get(prev_date_str, {})
         # 施策開始日もハッシュに含める（名簿の開始日が後から入力・修正された場合に、
-        # 基準が変わった過去日付をHISTORY_DAYSの範囲で自動再生成するため）
-        extra = f"{sorted(answers.items())}|start={training_start_date or ''}"
+        # 基準が変わった過去日付をHISTORY_DAYSの範囲で自動再生成するため）。
+        # COMMENT_FORMAT_VERSIONは出力フォーマット自体を変えた際に上げる。数値・回答が
+        # 変わっていない行でも、フォーマット変更時は全件を再生成させたいため
+        extra = f"{sorted(answers.items())}|start={training_start_date or ''}|fmt={COMMENT_FORMAT_VERSION}"
         row_hash = compute_row_hash(row, TARGET_METRICS, extra=extra)
 
         cached = store.get(date_str, uid)
@@ -101,6 +106,7 @@ def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[
             genai_client,
             settings.gemini_model,
             context,
+            settings.objective_text,
             settings.comment_min_len,
             settings.comment_max_len,
         )
