@@ -43,7 +43,7 @@ gcloud run jobs deploy "${JOB_NAME}" \
   --max-retries 1 \
   --task-timeout 30m \
   --set-env-vars "${ENV_VARS}" \
-  --set-secrets "/secrets/sa-key.json=soxai-sa-key:latest"
+  --set-secrets "/secrets/sa-key.json=condition-check-ai-sa-key:latest"
 
 echo "==> Cloud Schedulerで実行権限を付与(自分自身をトリガー)"
 gcloud run jobs add-iam-policy-binding "${JOB_NAME}" \

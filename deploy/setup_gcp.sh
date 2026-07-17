@@ -43,11 +43,11 @@ gcloud projects add-iam-policy-binding "${PROJECT_ID}" \
   || echo "!! roles/aiplatform.user の付与に失敗しました。IAM管理者に依頼してください。"
 
 echo "==> Secret Manager にSAキーの箱を作成(値は bootstrap.sh が登録)"
-gcloud secrets create soxai-sa-key --replication-policy=automatic 2>/dev/null \
-  || echo "(secret soxai-sa-key は既に存在します)"
+gcloud secrets create condition-check-ai-sa-key --replication-policy=automatic 2>/dev/null \
+  || echo "(secret condition-check-ai-sa-key は既に存在します)"
 
 echo "==> Secret読み取り権限の付与"
-gcloud secrets add-iam-policy-binding soxai-sa-key \
+gcloud secrets add-iam-policy-binding condition-check-ai-sa-key \
   --member="serviceAccount:${SA_EMAIL}" \
   --role="roles/secretmanager.secretAccessor" \
   --condition=None \

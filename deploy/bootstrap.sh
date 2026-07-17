@@ -25,9 +25,9 @@ echo "==> [1/4] GCP初期セットアップ(API有効化・IAM・Secretの箱)"
 SA_EMAIL="${SA_EMAIL}" ./deploy/setup_gcp.sh "${PROJECT_ID}" "${REGION}"
 
 echo "==> [2/4] SAキーの準備"
-if gcloud secrets versions list soxai-sa-key --project "${PROJECT_ID}" \
+if gcloud secrets versions list condition-check-ai-sa-key --project "${PROJECT_ID}" \
     --filter="state=ENABLED" --format="value(name)" | grep -q .; then
-  echo "(secret soxai-sa-key は登録済み。スキップします)"
+  echo "(secret condition-check-ai-sa-key は登録済み。スキップします)"
 else
   # 手元にキーJSONがあれば SA_KEY_FILE=path で指定。無ければその場で新規キーを発行する
   KEY_FILE="${SA_KEY_FILE:-}"
@@ -39,7 +39,7 @@ else
       --iam-account "${SA_EMAIL}" --project "${PROJECT_ID}"
     CREATED_KEY=1
   fi
-  gcloud secrets versions add soxai-sa-key --data-file="${KEY_FILE}" --project "${PROJECT_ID}"
+  gcloud secrets versions add condition-check-ai-sa-key --data-file="${KEY_FILE}" --project "${PROJECT_ID}"
   # Secret Manager登録後はローカルにキーを残さない
   if [[ -n "${CREATED_KEY}" ]]; then rm -f "${KEY_FILE}"; fi
 fi
