@@ -1,4 +1,8 @@
-from src.sheets_client import load_training_start_dates, parse_training_start_dates
+from src.sheets_client import (
+    load_training_start_dates,
+    parse_training_start_dates,
+    roster_records_from_values,
+)
 
 
 def test_parse_training_start_dates_maps_uid_to_date():
@@ -34,6 +38,42 @@ def test_parse_training_start_dates_strips_whitespace():
     result = parse_training_start_dates(records)
 
     assert result == {"rizap_003": "2026-06-09"}
+
+
+def test_roster_records_from_values_finds_header_below_title_rows():
+    """実際の名簿は1行目タイトル・2行目空行・3行目ヘッダー。この構造をそのまま読めること。"""
+    values = [
+        ["被験者名簿", "", "", "", "", "", "", "", "", ""],
+        [],
+        ["被験者ID", "氏名", "メール", "年齢", "性別", "所属", "連絡先", "備考", "soxai_id", "トレーニング開始日"],
+        ["P01", "田川敦貴", "a@example.com", "", "", "", "", "", "rizap_019", "2026-06-27"],
+        ["P17", "蓼原雅之", "b@example.com", "", "", "", "", "", "rizap_007", ""],  # 開始日未定
+        ["P22", "", "", "", "", "", "", "", "", ""],  # soxai_id未入力
+    ]
+
+    records = roster_records_from_values(values)
+    result = parse_training_start_dates(records)
+
+    assert result == {"rizap_019": "2026-06-27"}
+
+
+def test_roster_records_from_values_handles_short_rows():
+    """ヘッダーより短いデータ行（末尾の空セルが省略されて返るケース）でも落ちないこと。"""
+    values = [
+        ["soxai_id", "トレーニング開始日"],
+        ["rizap_001"],  # 開始日セルが無い
+        ["rizap_002", "2026-07-01"],
+    ]
+
+    result = parse_training_start_dates(roster_records_from_values(values))
+
+    assert result == {"rizap_002": "2026-07-01"}
+
+
+def test_roster_records_from_values_returns_empty_when_header_missing():
+    values = [["被験者名簿"], ["名前", "メール"], ["田川", "a@example.com"]]
+
+    assert roster_records_from_values(values) == []
 
 
 class _PermissionDeniedGC:

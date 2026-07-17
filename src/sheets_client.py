@@ -146,6 +146,23 @@ def load_form_answers(sh: gspread.Spreadsheet, sheet_name: str) -> dict[str, dic
     return answers
 
 
+def roster_records_from_values(values: list[list]) -> list[dict]:
+    """名簿シートの生の値（全セル）からレコードのリストを作る。
+
+    実際の名簿は1行目がタイトル・3行目がヘッダーという構造のため、
+    「1行目=ヘッダー」前提の get_all_records() は使えない（タイトル行の空セルが
+    重複ヘッダー扱いになり GSpreadException になる）。soxai_id と トレーニング開始日 の
+    両方を含む行をヘッダーとして探し、それ以降をデータ行として読む。
+    ヘッダー行が見つからなければ空リストを返す。
+    """
+    for i, row in enumerate(values):
+        if ROSTER_UID_COLUMN in row and ROSTER_TRAINING_START_DATE_COLUMN in row:
+            header = [str(h).strip() for h in row]
+            # データ行は末尾の空セルが省略されて短く返ることがあるため strict にしない
+            return [dict(zip(header, r, strict=False)) for r in values[i + 1 :]]
+    return []
+
+
 def parse_training_start_dates(records: list[dict]) -> dict[str, str]:
     """マスター名簿の行データから {soxai_id: トレーニング開始日文字列} を作る。
 
@@ -188,7 +205,17 @@ def load_training_start_dates(gc: gspread.Client, roster_sheet_id: str, sheet_na
             roster_sheet_id,
         )
         return {}
-    return parse_training_start_dates(ws.get_all_records())
+    records = roster_records_from_values(ws.get_all_values())
+    if not records:
+        logger.warning(
+            "マスター名簿(%s)に %s / %s のヘッダー行が見つかりません。"
+            "全被験者が全履歴基準にフォールバックします。",
+            sheet_name,
+            ROSTER_UID_COLUMN,
+            ROSTER_TRAINING_START_DATE_COLUMN,
+        )
+        return {}
+    return parse_training_start_dates(records)
 
 
 def get_or_create_worksheet(sh: gspread.Spreadsheet, title: str, rows: int = 100, cols: int = 10):
