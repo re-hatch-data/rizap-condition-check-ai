@@ -12,6 +12,7 @@ Cloud Run Jobs から Cloud Scheduler 経由で毎朝9:00(JST)に起動される
 
 import logging
 import sys
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -30,6 +31,7 @@ from src.config import (
     validate_settings,
 )
 from src.metrics import compute_flags, row_context
+from src.rate_limit import with_rate_limit_retry
 from src.sheets_client import (
     get_google_services,
     list_subject_spreadsheets,
@@ -50,7 +52,7 @@ def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[
     spreadsheet_id = subject["spreadsheet_id"]
     logger.info("=== %s (%s) ===", name, spreadsheet_id)
 
-    sh = gc.open_by_key(spreadsheet_id)
+    sh = with_rate_limit_retry(gc.open_by_key, spreadsheet_id)
     store = CommentStore(sh)
 
     # 当日分を生成済みならこれ以上読まずに抜ける。手動再実行やジョブの自動リトライが
@@ -140,7 +142,13 @@ def main() -> int:
     logger.info("マスター名簿から施策開始日を取得: %d名分", len(training_start_dates))
 
     failures = []
-    for subject in subjects:
+    for i, subject in enumerate(subjects):
+        if i > 0:
+            # 被験者ごとに複数のSheets API呼び出しが発生するため、間隔を空けずに
+            # 全員分を連続実行すると「1分あたりの読み取りリクエスト数」の既定クォータに
+            # 容易に達してしまう(実測)。with_rate_limit_retryでの再試行と合わせ、
+            # そもそも制限に達しにくくする
+            time.sleep(2)
         try:
             process_subject(gc, genai_client, subject, training_start_dates)
         except Exception:
