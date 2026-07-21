@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 import gspread
 
 from src.config import COMMENT_LOG_SHEET
+from src.rate_limit import with_rate_limit_retry
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +39,16 @@ class CommentStore:
 
     def _get_or_create_ws(self):
         try:
-            return self._sh.worksheet(COMMENT_LOG_SHEET)
+            return with_rate_limit_retry(self._sh.worksheet, COMMENT_LOG_SHEET)
         except gspread.WorksheetNotFound:
-            ws = self._sh.add_worksheet(title=COMMENT_LOG_SHEET, rows=200, cols=len(HEADERS))
-            ws.update("A1", [HEADERS])
+            ws = with_rate_limit_retry(
+                self._sh.add_worksheet, title=COMMENT_LOG_SHEET, rows=200, cols=len(HEADERS)
+            )
+            with_rate_limit_retry(ws.update, "A1", [HEADERS])
             return ws
 
     def _load(self) -> None:
-        for r in self._ws.get_all_records():
+        for r in with_rate_limit_retry(self._ws.get_all_records):
             key = (str(r.get("日付", "")), str(r.get("ユーザーID", "")))
             self._entries[key] = {
                 "comment": r.get("コメント", ""),
@@ -77,7 +80,7 @@ class CommentStore:
             rows.append([date_str, entry["comment"], uid, entry["hash"], entry["generated_at"]])
         # 日次で1行ずつ増え続けるため、初期グリッド(200行)を超えたら拡張する
         if len(rows) > self._ws.row_count:
-            self._ws.resize(rows=len(rows) + 50)
-        self._ws.clear()
-        self._ws.update("A1", rows)
+            with_rate_limit_retry(self._ws.resize, rows=len(rows) + 50)
+        with_rate_limit_retry(self._ws.clear)
+        with_rate_limit_retry(self._ws.update, "A1", rows)
         self._dirty = False
