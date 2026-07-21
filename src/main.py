@@ -43,8 +43,10 @@ from src.sheets_client import (
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# OKR+SBI+KPTフォーマット導入時点のバージョン。出力フォーマットを変える改修をしたら上げる
-COMMENT_FORMAT_VERSION = "okr_sbi_kpt_v1"
+# OKR+SBI+KPTフォーマット導入時点のバージョン。出力フォーマットを変える改修をしたら上げる。
+# v2: SBIのimpact/KPTのtryの根拠に8学問分野の参考知識を追加し、安全ガードレールを強化
+# （内容のみの変更だがトレーナーに見える出力が変わるため、既存分も含めて全件再生成させる）
+COMMENT_FORMAT_VERSION = "okr_sbi_kpt_v2_academic"
 
 
 def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[str, str]) -> None:
