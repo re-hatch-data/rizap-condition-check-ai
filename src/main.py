@@ -45,8 +45,10 @@ logger = logging.getLogger(__name__)
 
 # OKR+SBI+KPTフォーマット導入時点のバージョン。出力フォーマットを変える改修をしたら上げる。
 # v2: SBIのimpact/KPTのtryの根拠に8学問分野の参考知識を追加し、安全ガードレールを強化
-# （内容のみの変更だがトレーナーに見える出力が変わるため、既存分も含めて全件再生成させる）
-COMMENT_FORMAT_VERSION = "okr_sbi_kpt_v2_academic"
+# v3: 参考知識を分野ごとに複数の具体的観点まで拡充し、日付+指標名から重点分野を機械的に
+#     ローテーションさせる仕組みを追加（実測: 知見を増やすだけでは同じ状況に対して毎回
+#     同じ観点(例:体内時計)に収束してしまい、繰り返し感が出ることが分かったため）
+COMMENT_FORMAT_VERSION = "okr_sbi_kpt_v3_rotation"
 
 
 def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[str, str]) -> None:

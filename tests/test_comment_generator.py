@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.comment_generator import SYSTEM_PROMPT, _is_sane_key_result, build_prompt
+from src.comment_generator import SYSTEM_PROMPT, _DISCIPLINES, _is_sane_key_result, _pick_discipline, build_prompt
 
 
 def test_system_prompt_frames_reference_knowledge_as_tendency_not_fact():
@@ -45,6 +45,7 @@ def test_build_prompt_includes_flagged_metric_and_length_instruction():
     assert "【本日のKR対象】" in prompt
     assert "40〜60字" in prompt
     assert "目標テキスト" in prompt
+    assert "重点分野" in prompt
 
 
 def test_build_prompt_includes_trend_section_when_pre_and_post_available():
@@ -213,3 +214,53 @@ def test_is_sane_key_result_rejects_runaway_field():
     異常に長くなったKRは出力崩れとみなして破棄すること。"""
     runaway = _key_result(try_="あ" * 500)
     assert _is_sane_key_result(runaway) is False
+
+
+def test_pick_discipline_is_deterministic():
+    assert _pick_discipline("2026-07-11", "就寝時刻") == _pick_discipline("2026-07-11", "就寝時刻")
+
+
+def test_pick_discipline_varies_by_date():
+    """実測: 参考知識を増やすだけでは同じ状況に対して毎回同じ観点(例:体内時計)に収束したため、
+    日付が変われば重点分野も変わることで、同じ指標でも日によって異なる角度の説明を促す。"""
+    picks = {_pick_discipline(f"2026-07-{d:02d}", "就寝時刻") for d in range(1, 15)}
+    assert len(picks) > 1
+
+
+def test_pick_discipline_stays_within_metric_relevant_subset():
+    """実測: 8分野を指標に関係なく均等にローテーションすると、「ストレス」に
+    「バイオメカニクス」が割り当たり、こじつけの説明になるケースがあった。
+    指標ごとに関連の薄い分野を除いた候補からのみ選ぶこと。"""
+    for d in range(1, 29):
+        assert _pick_discipline(f"2026-07-{d:02d}", "ストレス") not in ("バイオメカニクス", "運動生理学")
+        assert _pick_discipline(f"2026-07-{d:02d}", "浅睡眠min") in ("睡眠医学", "神経科学")
+
+
+def test_pick_discipline_falls_back_to_full_list_for_unknown_metric():
+    picks = {_pick_discipline(f"2026-07-{d:02d}", "QOLスコア") for d in range(1, 29)}
+    assert picks <= set(_DISCIPLINES)
+
+
+def test_build_prompt_includes_daily_discipline_hint_only_when_flagged():
+    context = {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"QOLスコア": _metric(48, sd_dev=-2.5, flagged=True)},
+    }
+
+    prompt = build_prompt(context, "目標テキスト", ["QOLスコア"], min_len=40, max_len=60)
+
+    assert "今回のKRごとの重点分野" in prompt
+    assert _pick_discipline("2026-07-09", "QOLスコア") in prompt
+
+
+def test_build_prompt_omits_discipline_hint_when_no_flags():
+    context = {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"QOLスコア": _metric(48, sd_dev=0.1)},
+    }
+
+    prompt = build_prompt(context, "目標テキスト", [], min_len=40, max_len=60)
+
+    assert "今回のKRごとの重点分野" not in prompt
