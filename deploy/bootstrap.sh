@@ -33,8 +33,7 @@ else
   KEY_FILE="${SA_KEY_FILE:-}"
   CREATED_KEY=""
   if [[ -z "${KEY_FILE}" ]]; then
-    KEY_FILE="$(mktemp)/sa-key.json"
-    mkdir -p "$(dirname "${KEY_FILE}")"
+    KEY_FILE="$(mktemp -d)/sa-key.json"
     gcloud iam service-accounts keys create "${KEY_FILE}" \
       --iam-account "${SA_EMAIL}" --project "${PROJECT_ID}"
     CREATED_KEY=1
