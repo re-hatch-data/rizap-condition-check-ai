@@ -48,7 +48,10 @@ class CommentStore:
             return ws
 
     def _load(self) -> None:
-        for r in with_rate_limit_retry(self._ws.get_all_records):
+        records = with_rate_limit_retry(self._ws.get_all_records)
+        # flush時に「以前より行数が減った」場合へ空行上書きで対応するため、既存の行数を覚えておく
+        self._loaded_data_rows = len(records)
+        for r in records:
             key = (str(r.get("日付", "")), str(r.get("ユーザーID", "")))
             self._entries[key] = {
                 "comment": r.get("コメント", ""),
@@ -72,15 +75,25 @@ class CommentStore:
         self._dirty = True
 
     def flush(self) -> None:
-        """変更があった場合のみ、ログシート全体を書き戻す。"""
+        """変更があった場合のみ、ログシート全体を書き戻す。
+
+        clear()→update()の2段階は使わない。clearが成功した直後にupdateが失敗
+        (リトライ超過・タスクタイムアウト等)すると、トレーナーが見るログシートが
+        空のまま残るため。update("A1", rows)の上書き1回で反映し、既存データより
+        行数が減った場合(通常は起きない。読み込み時に重複キーが畳まれた場合など)は
+        減った分を空行で上書きして古い内容を消す。"""
         if not self._dirty:
             return
         rows = [HEADERS]
         for (date_str, uid), entry in sorted(self._entries.items()):
             rows.append([date_str, entry["comment"], uid, entry["hash"], entry["generated_at"]])
+        data_rows = len(rows) - 1
+        stale_rows = getattr(self, "_loaded_data_rows", 0) - data_rows
+        if stale_rows > 0:
+            rows += [[""] * len(HEADERS)] * stale_rows
         # 日次で1行ずつ増え続けるため、初期グリッド(200行)を超えたら拡張する
         if len(rows) > self._ws.row_count:
             with_rate_limit_retry(self._ws.resize, rows=len(rows) + 50)
-        with_rate_limit_retry(self._ws.clear)
         with_rate_limit_retry(self._ws.update, "A1", rows)
+        self._loaded_data_rows = data_rows
         self._dirty = False
