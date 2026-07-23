@@ -24,6 +24,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 
 from src.config import FORM_TIMESTAMP_COLUMN, ROSTER_TRAINING_START_DATE_COLUMN, ROSTER_UID_COLUMN
+from src.rate_limit import with_rate_limit_retry
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ def list_folder_files(drive_svc, folder_id: str, mime: str | None = None) -> lis
         q += f" and mimeType='{mime}'"
     out, token = [], None
     while True:
-        resp = (
+        resp = with_rate_limit_retry(
             drive_svc.files()
             .list(
                 q=q,
@@ -77,7 +78,7 @@ def list_folder_files(drive_svc, folder_id: str, mime: str | None = None) -> lis
                 includeItemsFromAllDrives=True,
                 pageToken=token,
             )
-            .execute()
+            .execute
         )
         out += resp.get("files", [])
         token = resp.get("nextPageToken")
@@ -113,10 +114,10 @@ def list_subject_spreadsheets(drive_svc, cond_folder_id: str) -> list[dict]:
 def load_daily_dataframe(sh: gspread.Spreadsheet, sheet_name: str) -> pd.DataFrame:
     """SOXAI_daily シートを DataFrame として読み込む。シートが無ければ空を返す。"""
     try:
-        ws = sh.worksheet(sheet_name)
+        ws = with_rate_limit_retry(sh.worksheet, sheet_name)
     except gspread.WorksheetNotFound:
         return pd.DataFrame()
-    records = ws.get_all_records()
+    records = with_rate_limit_retry(ws.get_all_records)
     return pd.DataFrame(records)
 
 
@@ -128,11 +129,11 @@ def load_form_answers(sh: gspread.Spreadsheet, sheet_name: str) -> dict[str, dic
     SOXAI RINGの同期状況（Q4）は除外する。シートが無ければ空dictを返す。
     """
     try:
-        ws = sh.worksheet(sheet_name)
+        ws = with_rate_limit_retry(sh.worksheet, sheet_name)
     except gspread.WorksheetNotFound:
         return {}
     answers: dict[str, dict[str, str]] = {}
-    for r in ws.get_all_records():
+    for r in with_rate_limit_retry(ws.get_all_records):
         ts = pd.to_datetime(str(r.get(FORM_TIMESTAMP_COLUMN, "")), errors="coerce")
         if pd.isna(ts):
             continue
@@ -186,8 +187,8 @@ def load_training_start_dates(gc: gspread.Client, roster_sheet_id: str, sheet_na
     アクセスできない/シートが無い場合は空dictを返し、全被験者が従来の全履歴基準にフォールバックする。
     """
     try:
-        sh = gc.open_by_key(roster_sheet_id)
-        ws = sh.worksheet(sheet_name)
+        sh = with_rate_limit_retry(gc.open_by_key, roster_sheet_id)
+        ws = with_rate_limit_retry(sh.worksheet, sheet_name)
     except (gspread.SpreadsheetNotFound, gspread.WorksheetNotFound):
         logger.warning(
             "マスター名簿(%s / %s)が見つかりません。全被験者が全履歴基準にフォールバックします。",
@@ -205,7 +206,7 @@ def load_training_start_dates(gc: gspread.Client, roster_sheet_id: str, sheet_na
             roster_sheet_id,
         )
         return {}
-    records = roster_records_from_values(ws.get_all_values())
+    records = roster_records_from_values(with_rate_limit_retry(ws.get_all_values))
     if not records:
         logger.warning(
             "マスター名簿(%s)に %s / %s のヘッダー行が見つかりません。"
@@ -220,6 +221,6 @@ def load_training_start_dates(gc: gspread.Client, roster_sheet_id: str, sheet_na
 
 def get_or_create_worksheet(sh: gspread.Spreadsheet, title: str, rows: int = 100, cols: int = 10):
     try:
-        return sh.worksheet(title)
+        return with_rate_limit_retry(sh.worksheet, title)
     except gspread.WorksheetNotFound:
-        return sh.add_worksheet(title=title, rows=rows, cols=cols)
+        return with_rate_limit_retry(sh.add_worksheet, title=title, rows=rows, cols=cols)
