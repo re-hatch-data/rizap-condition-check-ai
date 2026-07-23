@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from src.comment_generator import build_client, generate_comment
+from src.comment_generator import CommentOutputError, build_client, generate_comment
 from src.comment_store import CommentStore, compute_row_hash
 from src.config import (
     DAILY_SHEET,
@@ -42,6 +42,13 @@ from src.sheets_client import (
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
+
+# OKR+SBI+KPTフォーマット導入時点のバージョン。出力フォーマットを変える改修をしたら上げる。
+# v2: SBIのimpact/KPTのtryの根拠に8学問分野の参考知識を追加し、安全ガードレールを強化
+# v3: 参考知識を分野ごとに複数の具体的観点まで拡充し、日付+指標名から重点分野を機械的に
+#     ローテーションさせる仕組みを追加（実測: 知見を増やすだけでは同じ状況に対して毎回
+#     同じ観点(例:体内時計)に収束してしまい、繰り返し感が出ることが分かったため）
+COMMENT_FORMAT_VERSION = "okr_sbi_kpt_v3_rotation"
 
 
 def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[str, str]) -> None:
@@ -87,8 +94,10 @@ def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[
         prev_date_str = (row[DATE_COLUMN] - pd.Timedelta(days=1)).strftime("%Y-%m-%d")
         answers = form_answers.get(prev_date_str, {})
         # 施策開始日もハッシュに含める（名簿の開始日が後から入力・修正された場合に、
-        # 基準が変わった過去日付をHISTORY_DAYSの範囲で自動再生成するため）
-        extra = f"{sorted(answers.items())}|start={training_start_date or ''}"
+        # 基準が変わった過去日付をHISTORY_DAYSの範囲で自動再生成するため）。
+        # COMMENT_FORMAT_VERSIONは出力フォーマット自体を変えた際に上げる。数値・回答が
+        # 変わっていない行でも、フォーマット変更時は全件を再生成させたいため
+        extra = f"{sorted(answers.items())}|start={training_start_date or ''}|fmt={COMMENT_FORMAT_VERSION}"
         row_hash = compute_row_hash(row, TARGET_METRICS, extra=extra)
 
         cached = store.get(date_str, uid)
@@ -99,13 +108,20 @@ def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[
 
         context = row_context(row, TARGET_METRICS)
         context["form_answers"] = answers
-        comment = generate_comment(
-            genai_client,
-            settings.gemini_model,
-            context,
-            settings.comment_min_len,
-            settings.comment_max_len,
-        )
+        try:
+            comment = generate_comment(
+                genai_client,
+                settings.gemini_model,
+                context,
+                settings.objective_text,
+                settings.comment_min_len,
+                settings.comment_max_len,
+            )
+        except CommentOutputError:
+            # 出力崩れの日は保存せずスキップする（誤った内容を正しいハッシュと共に
+            # 保存すると恒久キャッシュされるため）。次回実行時に再生成される
+            logger.exception("  [%s] Gemini出力が不正のためこの日付をスキップします（次回実行時に再試行）", date_str)
+            continue
         store.upsert(date_str, uid, comment, row_hash)
         generated_count += 1
         logger.info("  [%s] 新規生成: %s", date_str, comment)
