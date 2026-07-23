@@ -1,6 +1,6 @@
 import pandas as pd
 
-from src.comment_generator import SYSTEM_PROMPT, _DISCIPLINES, _is_sane_key_result, _pick_discipline, build_prompt
+from src.comment_generator import _DISCIPLINES, SYSTEM_PROMPT, _is_sane_key_result, _pick_discipline, build_prompt
 
 
 def test_system_prompt_frames_reference_knowledge_as_tendency_not_fact():
@@ -16,7 +16,10 @@ def test_system_prompt_forbids_diagnosis_and_treatment_language():
 
 
 def test_reference_tendencies_cover_all_eight_disciplines():
-    disciplines = ["時間生物学", "神経科学", "運動生理学", "ホメオスタシス", "栄養学", "バイオメカニクス", "睡眠医学", "行動心理学"]
+    disciplines = [
+        "時間生物学", "神経科学", "運動生理学", "ホメオスタシス",
+        "栄養学", "バイオメカニクス", "睡眠医学", "行動心理学",
+    ]
     for discipline in disciplines:
         assert discipline in SYSTEM_PROMPT, f"{discipline}がSYSTEM_PROMPTに含まれていない"
 
@@ -214,6 +217,81 @@ def test_is_sane_key_result_rejects_runaway_field():
     異常に長くなったKRは出力崩れとみなして破棄すること。"""
     runaway = _key_result(try_="あ" * 500)
     assert _is_sane_key_result(runaway) is False
+
+
+def _fake_client(response_text: str):
+    from unittest.mock import Mock
+
+    client = Mock()
+    client.models.generate_content.return_value = Mock(text=response_text)
+    return client
+
+
+def _flagged_context():
+    return {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"総睡眠min": _metric(300.0, post_start_mean=390.0, sd_dev=-2.5, flagged=True)},
+    }
+
+
+def test_generate_comment_raises_on_invalid_json():
+    """解析失敗時にKRなし（=逸脱なしの定型文）へフォールバックしてはいけない。
+    呼び出し側が正しいrow_hashと共に保存すると誤った文言が恒久キャッシュされるため、
+    例外にして保存自体をスキップさせること。"""
+    import pytest
+
+    from src.comment_generator import CommentOutputError, generate_comment
+
+    client = _fake_client("すみません、JSONを生成し直します…")
+
+    with pytest.raises(CommentOutputError):
+        generate_comment(client, "model", _flagged_context(), "目標", 20, 60)
+
+
+def test_generate_comment_raises_on_runaway_key_result():
+    import json
+
+    import pytest
+
+    from src.comment_generator import CommentOutputError, generate_comment
+
+    kr = _key_result(try_="あ" * 500)
+    client = _fake_client(json.dumps({"key_results": [kr]}, ensure_ascii=False))
+
+    with pytest.raises(CommentOutputError):
+        generate_comment(client, "model", _flagged_context(), "目標", 20, 60)
+
+
+def test_generate_comment_formats_valid_response():
+    import json
+
+    from src.comment_generator import generate_comment
+
+    client = _fake_client(json.dumps({"key_results": [_key_result()]}, ensure_ascii=False))
+
+    result = generate_comment(client, "model", _flagged_context(), "目標", 20, 60)
+
+    assert "【O】目標" in result
+    assert "【KR: 総睡眠min】" in result
+
+
+def test_generate_comment_skips_gemini_when_no_flags():
+    from unittest.mock import Mock
+
+    from src.comment_generator import NO_FLAG_COMMENT, generate_comment
+
+    client = Mock()
+    context = {
+        "date": "2026-07-09",
+        "missing_days": 0,
+        "metrics": {"総睡眠min": _metric(380.0, post_start_mean=390.0, sd_dev=0.2)},
+    }
+
+    result = generate_comment(client, "model", context, "目標", 20, 60)
+
+    assert NO_FLAG_COMMENT in result
+    client.models.generate_content.assert_not_called()
 
 
 def test_pick_discipline_is_deterministic():

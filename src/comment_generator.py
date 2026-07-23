@@ -31,6 +31,13 @@ logger = logging.getLogger(__name__)
 # フラグが立った指標が無い日に返す固定文（Gemini呼び出し無し）
 NO_FLAG_COMMENT = "本日は特に大きな逸脱は見られません。引き続き今の生活リズムを維持しましょう。"
 
+
+class CommentOutputError(Exception):
+    """Gemini出力がJSONとして解釈できない・出力崩れ等で、保存に値する結果を得られなかった。
+
+    呼び出し側はこの日付の保存をスキップする（誤った内容を正しいハッシュと共に
+    キャッシュすると恒久化するため、保存しないことで次回実行時の再生成に委ねる）。"""
+
 # response_mime_type="application/json"だけだとGeminiが構造を厳密に守らず、
 # (実測: kptをsbiオブジェクトの内側にネストして返す等) 稀に階層を誤ることがあったため、
 # response_schemaで構造を強制する。
@@ -146,7 +153,7 @@ def _pick_discipline(date_str: str, metric: str) -> str:
     ためのメタ情報であり、被験者データそのものではない）。候補は指標と関連の
     薄い分野を除いた_METRIC_DISCIPLINESから選び、未知の指標名は全分野から選ぶ。"""
     candidates = _METRIC_DISCIPLINES.get(metric, _DISCIPLINES)
-    digest = hashlib.sha256(f"{date_str}|{metric}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{date_str}|{metric}".encode()).hexdigest()
     return candidates[int(digest, 16) % len(candidates)]
 
 SYSTEM_PROMPT = (
@@ -349,7 +356,9 @@ def generate_comment(
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_PROMPT,
-            max_output_tokens=3000,
+            # 全11指標が同時にフラグとなる日（欠測明け等）でも、6項目×11KRのJSONが
+            # 途中で切れない余裕を持たせる（切れるとJSON解析失敗→その日付は再試行行きになる）
+            max_output_tokens=8000,
             # gemini-2.5-flashは既定で内部思考(thinking)を行い、その思考トークンも
             # max_output_tokensの予算に含まれる。このタスクは深い推論は不要なため無効化する
             # (有効のままだと本文生成前に予算切れで途中で打ち切られることがある)
@@ -365,19 +374,19 @@ def generate_comment(
         if not isinstance(key_results, list):
             raise ValueError("key_resultsが配列ではありません")
     except (json.JSONDecodeError, ValueError, AttributeError) as e:
-        # JSON生成に失敗した場合でもジョブ全体を落とさず、KR無しとして扱う
-        # （翌日以降、データハッシュ不一致により自動的に再生成が試みられる）
-        logger.warning("Gemini応答のJSON解析に失敗しました: %s / raw=%s", e, raw)
-        key_results = []
+        # KR無し（=逸脱なしの定型文）へフォールバックしてはいけない。呼び出し側は
+        # 生成結果を正しいrow_hashと共に保存するため、フラグが立った日に「逸脱なし」の
+        # 誤った文言が恒久キャッシュされてしまう。例外にしてこの日付の保存自体を
+        # スキップさせ、次回実行時に再生成させる
+        raise CommentOutputError(f"Gemini応答のJSON解析に失敗しました: {e} / raw={raw[:200]}") from e
 
-    sane_key_results = []
     for kr in key_results:
-        if _is_sane_key_result(kr):
-            sane_key_results.append(kr)
-        else:
-            logger.warning("KRの出力が異常に長く出力崩れとみなして破棄します: metric=%s", kr.get("metric"))
+        if not _is_sane_key_result(kr):
+            # 一部のKRだけ破棄して保存すると、その欠けた状態が恒久キャッシュされるため
+            # （ハッシュは元データ由来で、出力品質を反映しない）、丸ごと再試行に回す
+            raise CommentOutputError(f"KRの出力が異常（出力崩れ）です: metric={kr.get('metric')}")
 
-    return format_feedback(objective_text, sane_key_results)
+    return format_feedback(objective_text, key_results)
 
 
 # response_schemaはJSONの構造(キーの階層)は強制するが、文字列フィールドの中身までは

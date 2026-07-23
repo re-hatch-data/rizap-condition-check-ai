@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import pandas as pd
 
-from src.comment_generator import build_client, generate_comment
+from src.comment_generator import CommentOutputError, build_client, generate_comment
 from src.comment_store import CommentStore, compute_row_hash
 from src.config import (
     DAILY_SHEET,
@@ -108,14 +108,20 @@ def process_subject(gc, genai_client, subject: dict, training_start_dates: dict[
 
         context = row_context(row, TARGET_METRICS)
         context["form_answers"] = answers
-        comment = generate_comment(
-            genai_client,
-            settings.gemini_model,
-            context,
-            settings.objective_text,
-            settings.comment_min_len,
-            settings.comment_max_len,
-        )
+        try:
+            comment = generate_comment(
+                genai_client,
+                settings.gemini_model,
+                context,
+                settings.objective_text,
+                settings.comment_min_len,
+                settings.comment_max_len,
+            )
+        except CommentOutputError:
+            # 出力崩れの日は保存せずスキップする（誤った内容を正しいハッシュと共に
+            # 保存すると恒久キャッシュされるため）。次回実行時に再生成される
+            logger.exception("  [%s] Gemini出力が不正のためこの日付をスキップします（次回実行時に再試行）", date_str)
+            continue
         store.upsert(date_str, uid, comment, row_hash)
         generated_count += 1
         logger.info("  [%s] 新規生成: %s", date_str, comment)
